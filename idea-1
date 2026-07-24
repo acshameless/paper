@@ -1,0 +1,1060 @@
+
+
+[TOC]
+
+## 1. Proposal Background, Value, and Phase 1 Focus
+
+### Challenges Addressed
+
+- **Unreliable alert delivery**: AWS China lacks native call/phone notifications. Current reliance on SNS (email/Slack) leads to alerts being drowned out or ignored due to high email/IM noise.
+- **Response bottlenecks**: T1 acts as a human relay (SNS → T1 manual call → T2/T3), with limited scalability and parallel processing. Response efficiency depends on human availability (status/response speed/experience).
+- **Fragmented debugging workflow**: Tools like CloudWatch, EKS, Slack, Confluence, and GitHub operate in silos, delaying root cause analysis and hindering knowledge reuse. Context assembly is difficult.
+- **No incident intelligence**: Historical incident handling experiences lack structure, crystal and reusability.
+
+
+
+###  Architecture diagram
+
+---
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#ffcc00', 'edgeLabelBackground':'#ffffff', 'tertiaryColor': '#fff0f0'}}}%%
+
+flowchart LR
+    %% 已存在 - 灰蓝色
+    subgraph EXIST["🔧 已存在 (Existing)"]
+        direction LR
+        A["☁️ CloudWatch Alarm"]:::existing
+        B["📧 SNS"]:::existing
+    end
+
+    %% 新增公共部分 - 绿色
+    subgraph COMMON["🆕 新增公共部分 (New Common)"]
+        direction LR
+        C["📬 SQS"]:::common
+        D["⚡ Lambda"]:::common
+        E["🎯 Decision Engine"]:::common
+        F["💾 DynamoDB"]:::common
+    end
+
+    %% 阶段一 - 橙色
+    subgraph PHASE1["🚀 阶段一 (Phase 1)"]
+        direction LR
+        G["📞 On-call Resolver"]:::phase1
+        H["📱 VMS Phone Call"]:::phase1
+    end
+
+    %% 阶段二 - 紫色
+    subgraph PHASE2["🔮 阶段二 (Phase 2)"]
+        direction LR
+        I["💬 Slack Notification"]:::phase2
+        J["📢 Slack Channel"]:::phase2
+        K["👤 Human"]:::phase2
+        L["🤖 bub Agent"]:::phase2
+        M["🔍 Debug Analysis"]:::phase2
+    end
+
+    %% 主流程连接
+    A --> B
+    B --> C
+    C --> D
+    D --> E
+    E --> F
+    E --> G
+    G --> H
+    E --> I
+    I --> J
+    J --> K
+    J --> L
+    L --> M
+    M --> J
+    L --> F
+
+    %% 样式定义
+    classDef existing fill:#607D8B,stroke:#37474F,stroke-width:3px,color:#ffffff,font-weight:bold
+    classDef common fill:#4CAF50,stroke:#2E7D32,stroke-width:3px,color:#ffffff,font-weight:bold
+    classDef phase1 fill:#FF9800,stroke:#E65100,stroke-width:3px,color:#ffffff,font-weight:bold
+    classDef phase2 fill:#9C27B0,stroke:#6A1B9A,stroke-width:3px,color:#ffffff,font-weight:bold
+
+    %% 子图样式
+    style EXIST fill:#ECEFF1,stroke:#607D8B,stroke-width:2px,color:#37474F
+    style COMMON fill:#E8F5E9,stroke:#4CAF50,stroke-width:2px,color:#2E7D32
+    style PHASE1 fill:#FFF3E0,stroke:#FF9800,stroke-width:2px,color:#E65100
+    style PHASE2 fill:#F3E5F5,stroke:#9C27B0,stroke-width:2px,color:#6A1B9A
+```
+
+**Legend**
+
+| Color    | Status     | Component Description                                        |
+| -------- | ---------- | ------------------------------------------------------------ |
+| 🔵 Gray   | Existing   | CloudWatch Alarm → SNS → Email                               |
+| 🟢 Green  | New Common | SQS → Lambda → Decision Engine → DynamoDB                    |
+| 🟠 Orange | Phase 1    | On-call Resolver → VMS Phone Call                            |
+| 🟣 Purple | Phase 2    | Slack Notification → Slack Channel → Human/bub Agent → Debug Analysis |
+
+
+
+### Design Goal (From Notification to Execution)
+
+---
+
+In the current framework, Tier 1 primarily function as a **"manual notifier"** and the system limited to **Signal Delivery** rather than **Response Orchestration**. The fundamental goal is to: evolve the Signal Delivery into an Actionable Incident Response System.
+
+- **Orchestrated**
+    A deterministic decision-making system based on a state machine, replacing human judgment and distribution.
+- **Escalable**
+    A time-driven automatic escalation chain (Tier 2 → Tier 3 → Dev) to eliminate human uncertainty.
+- **Collaborative**
+    Upgrade alarm handling from "point-to-point communication" to "thread-based incident handling."
+- **Learnable and Crystal**
+    All alarms must be stored in a structured manner, enabling the system to accumulate experience.
+
+
+
+
+
+### Layered Architecture
+
+---
+
+> The system strictly adheres to layered responsibilities, preventing the spread of coupling.
+
+| Layer                   | Core Responsibility                                          | Key Constraints                                              |
+| ----------------------- | ------------------------------------------------------------ | ------------------------------------------------------------ |
+| **Access Layer**        | Event Bus: Unified entry point, decouples event sources      | No business logic, no state judgment                         |
+| **Orchestration Layer** | Replayable distributed state machine: The system's "brain," the sole decision source | No in-memory state caching, Input = Event + Current State + Policy + OnCall + Time |
+| **Notification Layer**  | Side-effect execution layer: Executes reach-out actions, does not decide whether to reach out | Adapter pattern, replaceable, observable                     |
+| **Scheduling Layer**    | Time-triggered event re-injection mechanism                  | Primary: SQS Delay (0-15 min); Supplement: EventBridge(not recommended) |
+| **State Storage Layer** | Single Source of Truth: State machine engine, not ordinary storage | Atomic writes, version semantics, all history auditable      |
+| **Intelligence Layer ** | Human-Agent collaborative reasoning system: Enhances decision-making | No write production system permissions, all outputs explainable |
+
+
+
+
+
+
+
+### Phase I: Automated On-Call System for AWS China
+
+---
+
+#### Core Objective
+
+**The core objective of Phase I is not merely building a "notification system", but creating an alerting system with Deterministic Execution Capabilities. Transform the alerting system from Passive Notification → Active Response & Intelligent Diagnostics (Alert → Action → Intelligence).**
+
+
+
+**Goal:** In unreliable at-least-once execution environments, without manual T1 intervention, ensure every alert is **deterministically processed and eventually acknowledged/resolved**.
+
+| ID   | Goal                                         | SLO Metric                        | Architectural Capability         | Core Implementation Mechanism                                |
+| ---- | -------------------------------------------- | --------------------------------- | -------------------------------- | ------------------------------------------------------------ |
+| G1   | **Zero Alert Loss** (At-least-once Delivery) | DLQ Depth = 0                     | Reliable Event Delivery          | SQS Persistence + DLQ Isolation + Visibility Timeout Retry   |
+| G2   | **Strong First Contact**                     | Phone Attempt Rate ≥ 99.999%      | High Signal Reach Capability     | Primary Channel (Call) + Backup Channel (IM) + Auto-Degrade  |
+| G3   | **Noise Control**                            | Duplicate Notification Rate < 1%  | Consistency Control              | Idempotent State Machine + Cooldown Window + Deduplication Key |
+| G4   | **Deterministic Escalation**                 | Escalation Success Rate ≥ 99.999% | Time-driven Workflow Progression | SQS Delay Messages + State-driven Escalation Pathway         |
+
+#### Value Delivered
+
+- Replace manual T1 calls with **automated call/phone notifications** via Alibaba Cloud VMS or Feishu urgent call API
+- Implement **dynamic escalation chain** (T1 → T2 → T3) with retries, timeouts, and ACK tracking
+- Build a **Decision Engine** for intelligent alert routing, suppression, and escalation
+
+| Metric      | Impact                                                       |
+| ----------- | ------------------------------------------------------------ |
+| Reliability | Production-grade "strong delivery guarantee" for critical alerts |
+| Scalability | Automated escalation supports parallel response and fault tolerance |
+| Foundation  | Architecture designed for Phase 2 AI-assisted debugging integration |
+
+
+
+
+
+### Phase II: Intelligent Alert Collaboration
+
+---
+
+#### Core Objective
+
+The goal of Phase II is not to replace humans, but to use AI Agents to **compress decision latency/path**. The Agent and Human are "collaborative nodes" in the incident lifecycle, with the alert remaining central.
+
+| ID   | Goal                         | Measurement Metric               | Corresponding Pain Point      |
+| ---- | ---------------------------- | -------------------------------- | ----------------------------- |
+| G5   | **Structured Incident Data** | 100% Incident Coverage           | Lack of Knowledge Retention   |
+| G6   | **AI-assisted Debugging**    | Reduced MTTR (vs. Team Baseline) | Fragmented Debugging Workflow |
+| G7   | **Full Auditability**        | 0 Unattributed Incidents         | Compliance Requirements       |
+
+#### Value Delivered
+
+**Reduce MTTR (Mean Time To Recovery):**
+
+- Decrease time spent on information gathering
+- Expose potential root causes earlier
+
+**Reduce Cognitive Load:**
+
+- Automatically aggregate logs, metrics, and historical data
+- Eliminate manual system switching
+
+**Provide Structured Reasoning:**
+
+- Elevate from "chat records" to "computable data"
+- Support post-mortem analysis and knowledge crystal
+
+| Metric                  | Impact                                                       |
+| ----------------------- | ------------------------------------------------------------ |
+| MTTR Reduction          | AI Agent auto-collects context, accelerates root cause analysis |
+| Human-AI Collaboration  | Debug shifts from "human-driven" to "human-AI collaborative" |
+| Knowledge Crystal&Reuse | Reduce dependency on T2/T3 experience, leverage historical incident data |
+
+
+
+#### References (Inspiration Sources):
+
+1. [bubbuild/bub: Bub it. Build it. A common shape for agents that live alongside people.](https://github.com/bubbuild/bub)
+2. [Tape Systems — Context as Architecture](https://tape.systems/)
+3. [LogAct: Enabling Agentic Reliability via Shared Logs](https://arxiv.org/html/2604.07988v1)
+
+
+
+
+
+### Phase III Evolution & Future-Proofing
+
+---
+
+#### Core Objective:
+
+Provide a "zero-invasive evolution path" for future capabilities without introducing complexity.
+
+| Capability                               | Core Goal                                                    | Dependent Infrastructure      | Current Design Provisions                                    |
+| ---------------------------------------- | ------------------------------------------------------------ | ----------------------------- | ------------------------------------------------------------ |
+| **AWS Health Events Integration**        | Expand from passive alerts to proactive cloud-side events    | EventBridge                   | Unified event entry (Event-first architecture)               |
+| **Multi-Region Disaster Recovery**       | Enhance system-level availability (Region-level failures)    | DynamoDB Global Table         | Key design without region binding                            |
+| **Memory Enhanced Automatic Postmortem** | Shift from analysis assistance to automated knowledge retention | Phase II Automatic Postmortem | Structured incident storage                                  |
+| **OnCall Scheduling Engine Automation**  | Shift from static configuration to dynamic rule engine       | OnCall extended               | Time interval modeling already supported                     |
+| **Observability by Design**              | The system itself must be a **"monitorable system."**        | CloudWatch                    | All critical paths must have a metrics (Success, Delay, Failure Rate) |
+
+
+
+
+
+## **2. Phase I PoC Progress**
+
+1. Ali Cloud Enterprise Account & VMS Service:
+    - Using **mock VMS service** (lambda logs) for **interim testing/validation** with **simple db schema**. (**Done**)
+    - Successfully opened at this **week16** with **active VMS service.** (**Done**)
+    - **Preparing** **enterprise qualification materials** to fully utilize VMS, expected to take **at least 2 weeks**. (**Ongoing**)
+2. Backup Call Solution:
+    - Explore the use of ByteDance's Feishu urgent call feature as a back-up solution. (**Done**)
+    - **Prepared** **environment** **and verified feishu urgent call feature for simple PoC testing with simple db schema. (Done)**
+    - **Preparing enterprise qualification materials** to fully utilize ByteDance's **Feishu urgent call feature**, expected to take **at least 1 week**. (**Ongoing**)
+    - @Yongheng Zhai is also contacting **ByteDance's BD** to confirm the possibility of using **volcengine 语音通知 service**. (**Ongoing**)
+
+
+
+#### **Phase I End-to-End Event Flow Overview**
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant CW as CloudWatch
+    participant SNS
+    participant SQS
+    participant L as Lambda Worker
+    participant DDB as DynamoDB
+    participant N as Notifier
+    participant EB as EventBridge<br/>(Optional)
+
+    CW->>SNS: Alerts Event（JSON）
+    SNS->>SQS: Fan Out
+    SQS->>L: Trigger (batch=1)
+
+    L->>DDB: Load State / Policy / OnCall
+    L->>L: Decision Engine
+
+    alt NOTIFY / ESCALATE
+        L->>DDB: Conditional Write（lock）
+        L->>N: Notify
+        L->>DDB: Update State
+        L->>SQS: delay recheck
+        opt >15min
+            L->>EB: scheduling
+        end
+    else SUPPRESS
+        L->>DDB: Update last_seen
+    end
+```
+
+
+
+**Core Components:**
+
+| Component        | Responsibility                                               |
+| ---------------- | ------------------------------------------------------------ |
+| SQS              | Buffer SNS fan-out messages, provide retry capability        |
+| Lambda Worker    | Message processing entry point, invoke Decision Engine       |
+| Decision Engine  | Core decision logic (notify/escalate/suppress)               |
+| DynamoDB         | Store state, policies, On-Call roster                        |
+| On-call Resolver | Resolve current On-Call personnel, trigger call notifications |
+| Call             | Voice call delivery (Alibaba Cloud VMS / Feishu API)         |
+
+
+
+
+
+## 3. Phase I Core Data Model Design: DynamoDB
+
+**Core Objective:**
+
+Design a **replayable, derivable, and idempotent** distributed state machine system.
+
+
+
+#### Data Model Classification
+
+| Type            | Entity          | Role                | Core Characteristics                                        |
+| --------------- | --------------- | ------------------- | ----------------------------------------------------------- |
+| **State Data**  | AlarmState      | State Machine Core  | Strong consistency / High-write frequency / Decision driver |
+| **Config Data** | Policy / OnCall | Decision Input      | Low-frequency changes / Strong read consistency             |
+| **User Data**   | UserProfile     | External Dependency | Static / Cache-friendly                                     |
+
+
+
+#### DynamoDB Single Table Design
+
+Mapping the execution model to the data layer: `Event → (Read State + Config) → Decision → Write State → Generate New Event`
+**Key Insight:** DynamoDB Table = State Persistence Engine
+The system relies on **"state + event" driven progression** rather than a central scheduler.
+
+
+
+####  General definition
+
+```
+Table: oncall-platform
+
+PK: pk (Partition Key)
+SK: sk (Sort Key)
+Note: The pk/sk pair serves as: entity type identifier, access path encoder, and data distribution controller
+
+TTL: Disabled (Permanent retention for audit / replay / AI learning)
+
+ALARM#xxx      → State Entity
+ONCALL#xxx     → On-Call Schedule Entity
+POLICY#xxx     → Policy Entity
+USER#xxx       → User Entity
+```
+
+
+
+#### Table 1: AlarmState
+
+| Attribute        | Type   | Examples                |
+| ---------------- | ------ | ----------------------- |
+| pk               | String | ALARM#cpu-high-api-prod |
+| sk               | String | STATE#<epoch>           |
+| alarm_id         | String | cpu-high-api-prod       |
+| alarm_epoch      | Number | 3                       |
+| service          | String | xxx-service             |
+| severity         | String | P0                      |
+| current_state    | String | NOTIFIED \| …           |
+| current_level    | Number | 1                       |
+| current_user_id  | String | alice                   |
+| ack              | array  |                         |
+| ack[].status     | String |                         |
+| ack[].acked_by   | String | null                    |
+| ack[].acked_at   | Number | null                    |
+| decision_time    | Number | 1710000300              |
+| next_action_time | Number | 1710000300              |
+| cooldown_until   | Number | 1710000300              |
+| created_at       | Number | 1710000000              |
+| updated_at       | Number | 1710020000              |
+| idempotency_key  | String | sha256(...)             |
+
+**Key Field Design**
+
+1. **`alarm_epoch` (Core Isolation Mechanism)**
+
+    - **Definition:** Lifecycle version number for the same `alarm_id`, providing state isolation across time dimensions
+
+    - **Solved Issues:**：
+        - Alert re-trigger after recovery → **New lifecycle**
+        - Prevents:
+            - Old ACKs contaminating new alerts
+            - Old escalation status affecting new workflows
+
+
+2. **`escalation_level` (Workflow Progress Pointer)**
+
+    - **Uniquely represents current escalation progress**
+
+    - **Decision engine requires no historical inference**
+
+3. **`cooldown_expire_time` (Time-as-Logic)**
+
+    - **Converts deduplication logic into time-based judgment**
+    - **Avoids extra state fields** → Maintains state machine simplicity and derivability
+
+4. **`idempotency_key` (Idempotency Key Consistency Safeguard)**
+
+    - **Last line of defense against duplicate executions**
+    - Prevents issues from SQS redeliveries/Lambda retries/Network fluctuations
+
+    
+
+    **`idempotency_key = sha256(alarm_id + "#" + alarm_state + "#" + str(alarm_epoch) + "#" + str(escalation_level) + "#" + target_user_id)`**
+
+    | Component          | Description           | Stability |
+    | ------------------ | --------------------- | --------- |
+    | `alarm_id`         | Which alert           | ✅ Stable  |
+    | `alarm_state`      | ALARM or OK           | ✅ Stable  |
+    | `alarm_epoch`      | N th occurrence cycle | ✅ Stable  |
+    | `escalation_level` | Which escalation tier | ✅ Stable  |
+    | `target_user_id`   | Target user ID        | ✅ Stable  |
+
+    Add `target_user_id` to the idempotency key to prevent duplicate notifications to the wrong user during shift changes or message reordering. 
+
+    For example, if T1 user Alice doesn't respond and escalates to T2 user Bob, the system might retry and attempt to notify T1 level again. If the roster has switched to Charlie during this time, we must ensure notifications aren't accidentally sent to Alice.
+
+
+
+```json
+{
+  "pk": "ALARM#cpu-high-api-prod",
+  "sk": "STATE#<epoch>",
+
+  "alarm_id": "cpu-high-api-prod",
+  "alarm_epoch": 3,
+
+  "service": "xxx-service",
+  "severity": "P0",
+
+  "current_state": "NOTIFIED | ...",
+  "current_level": 1,
+  "current_user_id": "alice",
+  
+  "ack": {
+      "status": "None | ACKED",
+      "acked_by": null,
+      "acked_at": null,
+  },
+  
+  "decision_time": "1710000300",
+  "next_action_time": "1710000300",
+  "cooldown_until": "1710000300",
+  
+  "created_at": 1710000300,
+  "updated_at": 1710000300,
+  
+  "idempotency_key": "sha256(...)"
+}
+```
+
+
+
+
+
+
+
+#### Table 2: OnCall
+
+| Attribute  | Type   | Examples           |
+| ---------- | ------ | ------------------ |
+| pk         | String | ONCALL#xxx-service |
+| sk         | String | SHIFT#start#end    |
+| service    | String | xxx-service        |
+| start_time | Number | 1710000000         |
+| end_time   | Number | 1810000000         |
+| user_id    | String | alice              |
+| level      | Number | 1                  |
+| timezone   | String | Asia/Shanghai      |
+| created_at | Number | 1710000000         |
+| updated_at | Number | 1710020000         |
+
+
+
+```json
+{
+  "pk": "ONCALL#xxx-service",
+  "sk": "SHIFT#start#end",
+
+  "service": "xxx-service",
+  "start_time": "...",
+  "end_time": "...",
+
+  "user_id": "alice",
+  "level": 1,
+  "timezone": "Asia/Shanghai",
+   
+  "created_at": 1710000300,
+  "updated_at": 1710000300,
+}
+```
+
+
+
+
+
+
+
+#### Table 3: Escalation Policy
+
+| Attribute                        | Type          | Examples                                            |
+| -------------------------------- | ------------- | --------------------------------------------------- |
+| pk                               | string        | POLICY#<service>                                    |
+| sk                               | string        | VERSION#<version>                                   |
+| service                          | string        | <service>                                           |
+| version                          | string        | <version>                                           |
+| rules                            | array         | Rule array with severity, levels, cooldown_seconds  |
+| rules[].severity                 | string        | "P0"                                                |
+| rules[].levels                   | array         | Upgrade Level Configuration Array                   |
+| rules[].levels[].level           | number        | 1, 2, 3                                             |
+| rules[].levels[].target_role     | string        | "oncall_primary", "oncall_backup", "oncall_manager" |
+| rules[].levels[].timeout_seconds | number        | 300, 600                                            |
+| rules[].levels[].channels        | array<string> | ["feishu_urgent", "vms"]                            |
+| rules[].cooldown_seconds         | number        | 300                                                 |
+| is_active                        | boolean       | true                                                |
+| created_at                       | number        | 1710000000                                          |
+| updated_at                       | number        | 1810000000                                          |
+
+
+
+```json
+{
+  "pk": "POLICY#<service>",
+  "sk": "VERSION#<version>",
+
+  "service": "<service>",
+  "version": "<version>",
+
+  "rules": [
+    {
+      "severity": "P0",
+      "levels": [
+        {
+          "level": 1,
+          "target_role": "oncall_primary",
+          "timeout_seconds": 300,
+          "channels": ["feishu_urgent", "vms"]
+        },
+        {
+          "level": 2,
+          "target_role": "oncall_backup",
+          "timeout_seconds": 300,
+          "channels": ["feishu_urgent", "vms"]
+        },
+        {
+          "level": 3,
+          "target_role": "oncall_manager",
+          "timeout_seconds": 600,
+          "channels": ["feishu_urgent", "vms"]
+        }
+      ],
+      "cooldown_seconds": 300
+    }
+  ],
+
+  "is_active": true,
+  "created_at": 1710000000,
+  "updated_at": 1810000000
+}
+```
+
+
+
+
+
+
+
+#### Table 4: UserProfile
+
+| Attribute               | Type          | Description                            |
+| ----------------------- | ------------- | -------------------------------------- |
+| pk                      | string        | USER#alice                             |
+| sk                      | string        | META                                   |
+| user_id                 | string        | alice                                  |
+| name                    | string        | Alice Zhang                            |
+| contacts                | object        | -                                      |
+| contacts.feishu_open_id | string        | ou_xxx                                 |
+| contacts.phone          | string        | 138xxxxxxxx                            |
+| contacts.email          | string        | xxx @samsung.com                       |
+| roles                   | array<string> | ["oncall_primary", "backend_engineer"] |
+| status                  | string        | ACTIVE                                 |
+| timezone                | string        | Asia/Shanghai                          |
+| locale                  | string        | CN                                     |
+| created_at              | number        | 1710000000                             |
+| updated_at              | number        | 1810000000                             |
+
+
+
+```json
+{
+  "pk": "USER#alice",
+  "sk": "META",
+
+  "user_id": "alice",
+  "name": "Alice Zhang",
+
+  "contacts": {
+    "feishu_open_id": "ou_xxx",
+    "phone": "138xxxxxxxx",
+    "email": "alice@company.com"
+  },
+
+  "roles": [
+    "oncall_primary",
+    "backend_engineer"
+  ],
+
+  "status": "ACTIVE",
+
+  "timezone": "Asia/Shanghai",
+  "locale": "CN",
+
+  "created_at": 1710000000,
+  "updated_at": 1710000000
+}
+```
+
+
+
+
+
+## 4. Phase I Deterministic State Machine: Lambda
+
+The state machine is the system's sole **"Source of Truth,"** and all external behaviors must be derived from state transitions. There must be no implicit control flows. The design goal of this state machine is not to "describe workflow" but to ensure the following system properties:
+
+1. **Determinism**
+    - The same `(State, Event)` input must generate the same `Next State`.
+2. **Convergence**
+    - Under at-least-once execution semantics, the system must eventually converge to a unique stable state.
+3. **Recoverability**
+    - Any moment, the system can be restored by replaying `State + Event`.
+4. **Termination**
+    - Each alert lifecycle must converge to a terminal state (OK or MAX_ESCALATED).
+
+
+
+### 4.1 State Topology
+
+---
+
+**Deterministic Converging FSM for Distributed Systems with Idempotency Constraints under At-Least-Once Execution Semantics**
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> OK
+    OK --> PENDING : Alert Triggered (within cooldown window)
+    OK --> NOTIFYING : Alert Triggered (first touch)
+    PENDING --> NOTIFYING : Cooldown ends
+    PENDING --> OK : RECOVERED
+    NOTIFYING --> NOTIFIED : Notification succeeds
+    NOTIFYING --> NOTIFY_FAILED : Retries exhausted
+    NOTIFY_FAILED --> NOTIFYING : Next escalation cycle
+    NOTIFIED --> ACKED : ACK received
+    NOTIFIED --> ESCALATING : ACK timeout
+    ESCALATING --> NOTIFIED : Escalation notification succeeds
+    ESCALATING --> MAX_ESCALATED : Reaches max escalation level
+    MAX_ESCALATED --> ACKED : Manual ACK
+    MAX_ESCALATED --> OK : RECOVERED
+    ACKED --> OK : RECOVERED
+```
+
+
+
+
+
+### 4.2 State Semantics
+
+| **State**       | **Core Semantics**                                           |
+| --------------- | ------------------------------------------------------------ |
+| `OK`            | State machine is idle with no active alerts                  |
+| `PENDING`       | Intermediate state within deduplication/cooldown window, suppressed by time conditions |
+| `NOTIFYING`     | Side effects in progress, attempting to create external impact |
+| `NOTIFIED`      | Side effects created, awaiting ACK or timeout                |
+| `ESCALATING`    | Time-driven decision point for the next phase                |
+| `ACKED`         | Manual confirmation received, state machine terminates       |
+| `MAX_ESCALATED` | Reached policy boundary, state machine cannot proceed further |
+| `NOTIFY_FAILED` | External system failure, enters compensation path            |
+
+
+
+### 4.3 State Transition Constraints
+
+---
+
+> Decision Path Reference confluence page [2.5 incident management - D-KMS Guide - Confluence](https://confluence.sec.samsung.net/spaces/DGC/pages/1911270367/2.5+incident+management).
+
+**Any state transition must satisfy: `NextState = f(CurrentState, Event)`** 
+
+**Where `f` must meet:  Pure Function, Side-effect Free, Deterministic**
+
+
+
+#### Strong Invariants
+
+#### 1. Monotonic Progression
+
+- `escalation_level` must monotonically increase:
+
+```
+level(n+1) ≥ level(n)
+```
+
+- Prohibited:
+    - Rollback of escalation level
+    - Duplicate notifications for the same level (ensured by idempotency)
+
+------
+
+#### 2. ACK is Terminal Signal
+
+- Once in `state = ACKED`, then:
+
+- Prohibited:
+    - NOTIFY
+    - ESCALATE
+    - RECHECK
+
+> ACK is a **hard stop** for the entire state machine.
+
+------
+
+#### 3. Effect Isolation
+
+- State transition function `f`
+
+    - **Does not perform notifications**
+    - **Does not schedule tasks**
+
+- Side effects must be executed after state transition: `State Transition → Side Effect`
+
+- Otherwise, it may cause:
+
+    - Repeated execution of side effects during retries
+
+    - Non-reproducible states
+
+------
+
+#### 4. Time as First-class Input
+
+- Escalation behavior depends on: `now >= last_notify_time + timeout`
+
+- No central scheduler required
+- System can self-propel progression
+
+------
+
+#### 5. Terminal Convergence
+
+Each alert must eventually enter one of the following states：`OK | ACKED | MAX_ESCALATED`
+
+And once in a terminal state: No further state progression is allowed (unless entering a new epoch)
+
+
+
+### 4.4 Failure and Compensation Paths
+
+---
+
+This state machine **explicitly models failure paths**, rather than implicitly relying on retries:
+
+**NOTIFY_FAILED **
+
+- Indicates:
+    - External notification system is unavailable
+    - SQS retries have been exhausted
+
+- Subsequent strategies:
+    - Proceed to the next escalation round (NOTIFYING)
+    - Or fallback via Watchdog
+
+> **Failure is not an exception, only part of the state.**
+
+
+
+
+
+## 5. Phase II：Intelligent Alert Collaboration
+
+**Introducing AI Agent (bub) : Enhancing Decision-Making Without Compromising System Determinism**
+
+
+
+### 5.1 Design Goals
+
+---
+
+**Goal: Compress Human Decision Pathways (Decision Latency), Not Replace Humans**
+
+- **Reducing MTTR (Mean Time To Recovery)**
+    - Minimize time cost on information gathering.
+    - Proactively identify potential root causes.
+- **Reduce Cognitive Load**
+    - Automatically aggregate logs, metrics, and historical data.
+    - Eliminate the need for manual system switching and context hopping.
+- **Providing Structured Reasoning**
+    - Transform the "Troubleshooting Process" into **Structured, Queryable, and Reusable Data Assets**.
+    - Enable detailed postmortems and knowledge accumulation.
+
+
+
+### 5.2 Agent Positioning
+
+---
+
+**Agent as a "Collaborative Node" in the Incident Lifecycle.**
+
+
+
+#### Design Constraints
+
+1. **One Incident = One Thread (Strong Binding)**
+2. **Agent Does Not Participate in Control Flow (Critical Constraint)**
+    - AI can only "suggest," not "execute." Prohibited actions include modifying alert status, triggering escalations, writing to production systems
+3. **Agent as a "Peer Participant" (Equal to T2 / T3 / Dev)**
+    - All outputs must be **Explainable**,**Traceable**,**Questionable**
+
+
+
+### 5.3 End-to-End Flow
+
+---
+
+```mermaid
+sequenceDiagram
+    autonumber
+
+    participant TRG as Trigger
+    participant IM as Incident Manager
+    participant THREAD as Collaboration Thread
+    participant HUMAN as Human Engineer
+    participant BUB as bub Agent
+    participant LLM as LLM + Tools
+    participant DDB as DynamoDB
+    participant MEM as Incident Memory
+
+    Note over TRG, MEM: Phase 1 to Phase 2 Handoff
+
+    TRG->>IM: ACK received / P0 Escalation
+    IM->>DDB: Create Incident (status=INVESTIGATING)
+    IM->>THREAD: Create collaboration thread
+
+    Note over TRG, MEM: Agent Initial Analysis
+
+    IM->>BUB: Start initial analysis
+    BUB->>DDB: Load incident context
+    BUB->>MEM: Query similar incidents
+    MEM-->>BUB: Historical matches
+    BUB->>LLM: Analyze (context + tools, max 15 calls)
+    LLM-->>BUB: Structured output (analysis, root_cause, confidence)
+    BUB->>DDB: Persist Analysis + RootCause v1
+    BUB->>THREAD: Post initial analysis (confidence: 0.65)
+
+    Note over TRG, MEM: Human + Agent Collaborative Debug
+
+    loop Human-Agent Loop
+        HUMAN->>THREAD: Question / Context / @bub
+        THREAD->>BUB: Trigger agent
+        BUB->>LLM: Analyze with new context
+        LLM-->>BUB: Updated structured output
+        BUB->>DDB: Update RootCause v(n+1)
+        BUB->>THREAD: Post updated analysis
+        alt confidence >= 0.8
+            THREAD-->>HUMAN: High-confidence root cause alert
+        end
+        HUMAN->>THREAD: Confirm / Challenge / Request more data
+    end
+
+    Note over TRG, MEM: Structured Knowledge Crystal
+
+    loop Every interaction
+        THREAD->>DDB: Append Timeline event
+        Note over DDB: RootCause converges (v1 -> v2 -> v3)
+    end
+
+    Note over TRG, MEM: Incident Close -> Postmortem
+
+    HUMAN->>THREAD: Confirm root cause / Close incident
+    THREAD->>IM: Incident Resolved
+    IM->>DDB: status = RESOLVED
+    IM->>BUB: Generate Postmortem
+    BUB->>LLM: Summarize full timeline
+    LLM-->>BUB: Postmortem draft
+    BUB->>THREAD: Post Postmortem (timeline / root cause / action items)
+    BUB->>MEM: Crystal knowledge (service + root_cause + pattern)
+    HUMAN->>THREAD: Validate Postmortem
+
+    Note over TRG, MEM: Knowledge Reuse Loop
+
+    MEM-->>BUB: Future incident: similarity retrieval -> experience reuse
+```
+
+
+
+
+
+### 5.4 Incident Data Model
+
+---
+
+**Core Objective:** Transform the "Troubleshooting Process" into **Structured, Queryable, and Reusable Data Assets**.
+
+
+
+Refer to Incident Report Template  [3.4.8.0 Incident Report Template - Big Data Platform China - Confluence](https://confluence.sec.samsung.net/spaces/BDPCNC/pages/834267053/3.4.8.0+Incident+Report+Template)
+
+| INCIDENT DATE           | 22.08.23 15:14 ~ 22.08.23 18:13 (KST)                        |
+| ----------------------- | ------------------------------------------------------------ |
+| STATUS                  | Done                                                         |
+| REPORTER                | xxx                                                          |
+| DETECTION               | Incident discovery methods such as Slack, JIRA, daily maintenance, etc. |
+| SUMMARY                 | Communication between Collector ↔ Pipeline was interrupted due to the deletion of Subscription.<br/>Subscription has Expiration Option enabled by default, and messages are automatically deleted if they do not exist within 31 days.<br/>We immediately re-create Subscription with the same option and the problem is fixed. |
+| IMPACT                  | This incident has had an impact on who, when, and what.<br/>For example, the ABC service frequently calls Failover API within 2 hours, causing delays in API response |
+| TIMELINE                | - 15:14: The system received a new collection request<br/>- 15:18:Pipeline starts running<br/>- 18:02: Manually restore Subscription<br/>- 18:13: Recovery complete |
+| RESOLUTION AND RECOVERY | Complete the recovery by manually rebuilding the Subscription in real time. |
+| ROOT CAUSE              | Root cause of analysis (fill out specific analysis results here). |
+| CORRECTIVE ACTIONS      | Follow-up corrective actions to be implemented (specific actions are listed here). |
+| LESSONS LEARNED         | What went well<br />What we got lucky<br />What did not go well |
+
+
+
+
+
+## 6. Phase III：Evolution & Future-Proofing
+
+Phase III is not in the current implementation scope, but the current architecture design has reserved a zero intrusion extension path.
+
+
+
+
+
+### 6.1 Evolution direction
+
+| Capability                               | Core Goal                                                    | Dependent Infrastructure      | Current Design Provisions                                    |
+| ---------------------------------------- | ------------------------------------------------------------ | ----------------------------- | ------------------------------------------------------------ |
+| **AWS Health Events Integration**        | Expand from passive alerts to proactive cloud-side events    | EventBridge                   | Unified event entry (Event-first architecture)               |
+| **Multi-Region Disaster Recovery**       | Enhance system-level availability (Region-level failures)    | DynamoDB Global Table         | Key design without region binding                            |
+| **Memory Enhanced Automatic Postmortem** | Shift from analysis assistance to automated knowledge retention | Phase II Automatic Postmortem | Structured incident storage                                  |
+| **OnCall Scheduling Engine Automation**  | Shift from static configuration to dynamic rule engine       | OnCall extended               | Time interval modeling already supported                     |
+| **Observability by Design**              | The system itself must be a **"monitorable system."**        | CloudWatch                    | All critical paths must have a metrics (Success, Delay, Failure Rate) |
+
+
+
+### 6.2 AWS Health Events Integration (Event Source Extension)
+
+---
+
+**Core Abstraction of the Current System: `Event → State → Decision → Action`. **
+Integrating AWS Health Events does not require modifying the core architecture; only extending the Event Source.
+
+
+
+#### Event Source Extension
+
+- Ingest AWS Health Event Stream
+- Unified Ingress via Amazon EventBridge
+- Convert to Internal Standard Event Schema → Write to SQ
+
+
+
+#### EventBridge Rule Example
+
+```json
+{
+  "source": ["aws.health"],
+  "detail-type": ["AWS Health Event"]
+}
+```
+
+
+
+#### Design Constraints
+
+1. **Unified Event Model**
+    - CloudWatch Alarms
+    - AWS Health Events
+    - Future Custom Events → All mapped to a unified internal Event Schema(json)
+2. **Event Semantic Standardization**
+    - Severity mapping (Health → P0/P1/P2)
+    - Resource → Service ownership mapping
+3. **Non-Intrusive Ingress**
+    - No modification to the state machine
+    - No modification to the Decision Engine 
+    - Only extend the "event input"
+
+
+
+### 6.3 Multi-Region
+
+---
+
+**System High Availability even met Region-Level incident.**
+
+1. **Active-Passive Architecture** (optional)
+    - Primary region handles traffic; secondary region takes over in case of failure.
+    - Provides failover capability for disaster recovery.
+2. **DynamoDB: Using Global Table**
+    - Use DynamoDB Global Tables for multi-region data synchronization.
+    - Ensures consistent and real-time data access across regions.
+
+
+
+
+
+### 6.4 Memory Enhanced Automatic Postmortem
+
+---
+
+**Memory is not only storage a lot of incidents postmortem. Memory is a living system that distills, retrieves, evolves, and forgets — making the system smarter with each incident.**
+
+
+
+
+
+### 6.5 OnCall Scheduling Engine Automation
+
+---
+
+**Current OnCall Scheduling depend on static time interval configuration, future OnCall Scheduling based on rule-driven scheduling.**
+
+
+
+To enhance the OnCall system, the following features will be implemented:
+
+1. **Rotation Rules**
+
+    - Automatically rotate on-call duties based on predefined schedules.
+
+2. **Holiday Strategies**
+
+    - Adjust on-call assignments to account for holidays and special events.
+
+3. **Time Zone Optimization**
+
+    - Ensure fair and efficient on-call coverage across different time zones.
+
+4. **Automatic Load Balancing**
+
+    - Prevent overloading by distributing on-call responsibilities based on workload and team capacity.
+
+    
+
+### 6.6 Observability
+
+---
+
+**The alerting system itself must be a "monitorable system." If the system cannot be observed, it cannot be trusted.**
+
+- **Metrics for All Critical Paths**
+    - Track success rate, latency, and failure rate for key processes.
+
+- **Logs for All State Changes**
+    - Record every state transition to ensure visibility and accountability.
+- **Traceable Failures**
+    - Ensure all failures can be traced back to their root cause for effective debugging and resolution.
+
+
+
