@@ -1,1 +1,905 @@
-123
+# Automated On-Call & Incident Debug Platform — Technical Specification
+
+**Version**: 1.0-draft  
+**Author**: Architecture Review  
+**Status**: For Proposal Review  
+**Scope**: AWS China Region
+
+---
+
+## Table of Contents
+
+1. [Problem Statement](#1-problem-statement)
+2. [Goals & Non-Goals](#2-goals--non-goals)
+3. [System Overview & Phase Roadmap](#3-system-overview--phase-roadmap)
+4. [Phase I — Automated On-Call Notification](#4-phase-i--automated-on-call-notification)
+    - 4.1 Architecture
+    - 4.2 Component Design
+    - 4.3 Notification Channel Strategy
+    - 4.4 State Machine
+    - 4.5 DynamoDB Single-Table Design
+    - 4.6 Decision Engine
+    - 4.7 Escalation & Time-Driven Scheduling
+    - 4.8 ACK Mechanism
+    - 4.9 Idempotency
+    - 4.10 Reliability & Failure Handling
+    - 4.11 Observability
+5. [Phase II — Collaborative Incident Debug (Human + Agent)](#5-phase-ii--collaborative-incident-debug)
+    - 5.1 Architecture
+    - 5.2 Agent Runtime Design
+    - 5.3 MCP Tool Layer
+    - 5.4 DynamoDB Schema (Incident Store)
+    - 5.5 Knowledge System
+6. [Phase III — Full Automation Horizon](#6-phase-iii--full-automation-horizon)
+7. [Cross-Cutting Concerns](#7-cross-cutting-concerns)
+8. [Implementation Difficulty Assessment](#8-implementation-difficulty-assessment)
+9. [Open Questions & Risks](#9-open-questions--risks)
+
+---
+
+## 1. Problem Statement
+
+AWS China does not provide native voice notification capabilities. Production P0/P1 incidents require **strong-reach** notifications — email and SNS-based push alone are insufficient for guaranteed human response within SLA windows.
+
+Beyond first-touch notification, incident response involves multiple engineers (T2/T3/TL/PM) collaborating in real-time with fragmented tools: manually querying CloudWatch, digging through EKS pod logs, pinging teammates over IM. This friction directly increases MTTR.
+
+This spec defines a two-phase platform that:
+
+1. **Phase I**: Replaces manual paging with an automated, escalating on-call notification chain (T1 → T2 → T3), with voice call as the primary channel.
+2. **Phase II**: Augments human collaborative debug with an AI agent (bub) that operates as a peer inside the incident thread, gathering data, surfacing root cause hypotheses, and maintaining a live structured summary.
+
+---
+
+## 2. Goals & Non-Goals
+
+### Goals
+
+| ID   | Goal                                                         | Metric                             |
+| ---- | ------------------------------------------------------------ | ---------------------------------- |
+| G1   | Zero alarm loss — at-least-once delivery                     | DLQ depth = 0 under normal load    |
+| G2   | Strong-reach first notification — voice/phone call as primary channel | Voice attempt rate ≥ 99% for P0/P1 |
+| G3   | Anti-spam — dedup + cooldown + ACK stops escalation          | Duplicate notify rate < 1%         |
+| G4   | Time-driven escalation — T1 → T2 → T3 if no ACK              | Escalation success rate ≥ 99.5%    |
+| G5   | Structured incident data — every incident persists a queryable record | 100% incident coverage             |
+| G6   | Agent-augmented debug — bub reduces manual query time by ≥ 50% | MTTR reduction measured per team   |
+| G7   | Full audit trail — all actions (human + agent + tool) are traceable | 0 unattributed events              |
+
+### Non-Goals (MVP)
+
+- Full web UI console (text-based interface via Feishu/Slack is sufficient for MVP)
+- Auto-remediation / self-healing (Phase III horizon)
+- Complex shift scheduling with rotation rules (basic schedule table is sufficient for Phase I)
+- Multi-region active-active (single-region primary with DLQ-based recovery)
+
+---
+
+## 3. System Overview & Phase Roadmap
+
+### 3.1 Phase Map
+
+```
+Phase I     ─── Automated OnCall Notification (Voice/IM)
+  │              CloudWatch → SNS → SQS → Lambda → Feishu Urgent / VMS
+  │              State Machine + Escalation + ACK
+  │
+Phase I.5   ─── VMS Integration (pending enterprise cert)
+  │              Drop-in swap of Feishu Urgent → Aliyun VMS
+  │
+Phase II    ─── Agent-Augmented Collaborative Debug
+  │              Incident Thread (Feishu) + bub Agent + MCP Tools
+  │              DynamoDB Incident Store + Knowledge Sink
+  │
+Phase III   ─── Automation Horizon
+               Runbook-driven auto-remediation + proactive anomaly detection
+```
+
+### 3.2 High-Level Architecture
+
+```mermaid
+flowchart TB
+    subgraph "Event Sources"
+        CW[CloudWatch Alarm]
+    end
+
+    subgraph "Ingest Layer"
+        SNS[SNS Topic\nfan-out]
+        SQS[SQS Queue\nbuffering + retry]
+        DLQ[Dead Letter Queue\nfault isolation]
+    end
+
+    subgraph "Processing Layer"
+        WL[Worker Lambda\norchestrator]
+        DE[Decision Engine\ncooldown · ack · level]
+    end
+
+    subgraph "State Store (DynamoDB)"
+        AS[AlarmState]
+        OC[OncallSchedule]
+        EP[EscalationPolicy]
+        US[UserProfile]
+    end
+
+    subgraph "Notification Layer"
+        NA[Notifier Abstraction]
+        FU[Feishu Urgent\nPhase I]
+        VM[Aliyun VMS\nPhase I.5]
+        FS[Feishu Bot\nfallback SMS equiv]
+    end
+
+    subgraph "Scheduling Layer"
+        EB[EventBridge Scheduler\nrecheck trigger]
+    end
+
+    subgraph "Phase II: Incident Debug"
+        IM[Incident Manager]
+        FB[Feishu Bot\nthread manager]
+        AR[Agent Runtime\nbub]
+        MCP[MCP Tool Layer]
+        IS[Incident Store\nDynamoDB]
+    end
+
+    CW --> SNS --> SQS --> WL
+    SQS --> DLQ
+    WL --> DE --> AS
+    DE --> OC
+    DE --> EP
+    DE --> US
+    DE --> NA
+    NA --> FU
+    NA --> VM
+    NA --> FS
+    DE --> EB --> SQS
+    WL --> IM --> IS
+    IM --> FB --> AR --> MCP
+```
+
+---
+
+## 4. Phase I — Automated On-Call Notification
+
+### 4.1 Architecture
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant CW as CloudWatch
+    participant SNS
+    participant SQS
+    participant L as Lambda Worker
+    participant DDB as DynamoDB
+    participant N as Notifier
+    participant EB as EventBridge Scheduler
+
+    CW->>SNS: Alarm event (JSON payload)
+    SNS->>SQS: Fan-out (MessageAttributes: severity, service)
+    SQS->>L: Trigger (batch_size=1)
+
+    L->>L: Parse & validate event
+    L->>DDB: Load AlarmState (GetItem)
+    L->>DDB: Load EscalationPolicy for service
+    L->>DDB: Resolve current oncall user (OncallSchedule)
+
+    L->>L: Decision Engine
+
+    alt First notification (notify_count == 0) or Escalation due
+        L->>DDB: Conditional write — acquire notify lock
+        Note over L,DDB: ConditionExpression prevents duplicate
+        L->>N: Notify(target, level, message)
+        alt Notify success
+            N-->>L: OK
+            L->>DDB: Update state (NOTIFIED, level, count, cooldown)
+            L->>EB: Schedule recheck at now + timeout
+        else Notify failure (retried 3x)
+            N-->>L: Error
+            L->>N: Fallback channel (Feishu Bot group message)
+            L->>DDB: Record last_error, still update state
+            L->>EB: Schedule recheck
+        end
+    else Within cooldown or already ACKED
+        L->>DDB: Update last_seen_time only
+        Note over L: Message deleted from SQS, no notification sent
+    end
+```
+
+### 4.2 Component Design
+
+#### 4.2.1 SNS (Event Entry Point)
+
+**Role**: Pure fan-out. No business logic.
+
+**Configuration**:
+
+```json
+{
+  "Type": "Standard",
+  "MessageRetentionPeriod": 3600,
+  "MessageAttributes": {
+    "severity": {"DataType": "String"},
+    "service": {"DataType": "String"},
+    "region": {"DataType": "String"}
+  }
+}
+```
+
+**Message Schema** (enforced, producers must conform):
+
+```json
+{
+  "alarm_id": "cpu-high-api-prod",
+  "alarm_name": "CPUUtilization > 90%",
+  "service": "api-service",
+  "severity": "P0",
+  "state": "ALARM",
+  "previous_state": "OK",
+  "timestamp": 1710000000,
+  "region": "cn-northwest-1",
+  "details": {
+    "metric": "CPUUtilization",
+    "threshold": 90,
+    "actual": 97.3,
+    "namespace": "AWS/EC2"
+  }
+}
+```
+
+**Critical rules**:
+
+- SNS does **zero** filtering or routing — that's the Decision Engine's job
+- All consumers subscribe to a single topic per environment (prod/staging)
+- Message deduplication is NOT at SNS layer — it's at DynamoDB state layer
+
+#### 4.2.2 SQS (Reliability Buffer)
+
+**Role**: At-least-once delivery, storm buffering, retry backoff.
+
+| Parameter           | Value    | Rationale                                                   |
+| ------------------- | -------- | ----------------------------------------------------------- |
+| Type                | Standard | At-least-once sufficient; ordering handled by state machine |
+| Visibility Timeout  | 90s      | Lambda timeout (30s) × 3 with safety margin                 |
+| Long Polling        | 20s      | Reduce empty receives                                       |
+| Message Retention   | 4 days   | Recovery window for DLQ triage                              |
+| DLQ maxReceiveCount | 5        | 5 failed attempts before parking                            |
+
+**Recheck messages** (from EventBridge via SQS): Use a separate `recheck` SQS queue or use `MessageAttributes.source=recheck` to distinguish. The Decision Engine treats recheck events as escalation-check triggers rather than new alarm events.
+
+> ⚠️ **SQS delay queue max is 15 minutes.** For escalation timeouts > 15 min, use EventBridge Scheduler directly (see §4.7). Do not use SQS delay queue for escalation scheduling.
+
+#### 4.2.3 Lambda (Orchestrator)
+
+**Configuration**:
+
+```
+Runtime:          Python 3.12
+Timeout:          30s
+Memory:           256 MB
+Reserved Concurrency: 10  (prevent thundering herd on alarm storms)
+Batch Size:       1        (one message = one atomic state transition)
+```
+
+**Critical design rules**:
+
+- Lambda is **stateless** — all state lives in DynamoDB
+- Every handler is idempotent (see §4.9)
+- Lambda does NOT do exponential backoff on DynamoDB ConditionExpression failures — it throws and lets SQS handle retry
+- Lambda errors that cannot be retried (e.g., schema parse failures) are sent to DLQ immediately via `batchItemFailures` response
+
+**Handler skeleton**:
+
+```python
+def handler(event, context):
+    for record in event['Records']:
+        try:
+            process_record(record)
+        except NonRetryableError as e:
+            # Schema error, poison pill — send to DLQ
+            batch_failures.append(record['messageId'])
+        except RetryableError as e:
+            # Transient — let SQS retry
+            raise
+
+def process_record(record):
+    msg = parse_and_validate(record['body'])  # raises NonRetryableError on bad schema
+    state = load_alarm_state(msg.alarm_id)    # raises RetryableError on DDB timeout
+    policy = load_escalation_policy(msg.service)
+    oncall = resolve_oncall(msg.service, now())
+    
+    decision = decision_engine(msg, state, policy)
+    execute_decision(decision, oncall, state, policy)
+```
+
+### 4.3 Notification Channel Strategy
+
+#### 4.3.1 The Notifier Abstraction
+
+The core design principle: **the notification channel is a pluggable adapter**. Business logic (decision engine, escalation, ACK) never touches channel-specific code.
+
+```python
+class NotifierBase(ABC):
+    @abstractmethod
+    def notify(self, target: User, message: NotifyMessage) -> NotifyResult:
+        """
+        Returns NotifyResult with:
+          - success: bool
+          - delivery_id: str  (for ACK tracking)
+          - error: Optional[str]
+        """
+
+class FeishuUrgentNotifier(NotifierBase):
+    """Phase I: Feishu 加急联系. Rings until user responds."""
+    def notify(self, target, message) -> NotifyResult: ...
+
+class AliyunVMSNotifier(NotifierBase):
+    """Phase I.5: Voice call via Aliyun VMS."""
+    def notify(self, target, message) -> NotifyResult: ...
+
+class FeishuBotNotifier(NotifierBase):
+    """Fallback: Feishu Bot direct message + group alert."""
+    def notify(self, target, message) -> NotifyResult: ...
+```
+
+**Notifier priority chain** (configured per severity):
+
+```yaml
+P0:
+  primary: FeishuUrgent     # or AliyunVMS once available
+  fallback: FeishuBot
+  group_alert: true          # also post to #oncall-alerts channel
+
+P1:
+  primary: FeishuUrgent
+  fallback: FeishuBot
+  group_alert: true
+
+P2:
+  primary: FeishuBot
+  fallback: null
+  group_alert: false
+```
+
+#### 4.3.2 Phase I: Feishu Urgent (加急联系)
+
+Feishu's Urgent message feature sends persistent push notifications that ring the recipient's phone until acknowledged in-app. This is the **interim voice-equivalent** while Aliyun VMS enterprise certification is pending.
+
+**Integration points**:
+
+- Feishu Open API: `POST /open-apis/im/v1/messages` with `msg_type: urgent_text`
+- ACK is detected by Feishu webhook callback (user taps "I got it" in app)
+- Feishu bot webhook must be configured with `urgent_message` event subscription
+
+**Limitation vs true VMS**: Feishu Urgent requires the user to have Feishu app installed and network connectivity. It does not place an actual PSTN phone call. This is acceptable for Phase I given current constraints.
+
+#### 4.3.3 Phase I.5: Aliyun VMS (Drop-in swap)
+
+Once enterprise certification clears, swap `FeishuUrgentNotifier` → `AliyunVMSNotifier` with zero changes to the Decision Engine.
+
+**Aliyun VMS call flow**:
+
+```
+VMS.SingleCallByTts(
+  CalledNumber = target.phone,
+  TtsCode = "TTS_ONCALL_TEMPLATE",
+  TtsParam = {"alarm_id": "...", "service": "...", "severity": "P0"},
+  PlayTimes = 3
+)
+```
+
+**DTMF ACK**: Configure Aliyun VMS to capture DTMF key press (e.g., press `1` to acknowledge). On DTMF callback, write `ack_status = ACKED` to DynamoDB.
+
+**Retry policy for VMS**:
+
+- Max 3 attempts with 5s exponential backoff
+- If all fail: fallback to Feishu Bot group message + log `last_error`
+
+### 4.4 State Machine
+
+The alarm state machine is the single source of truth for what action to take.
+
+```mermaid
+stateDiagram-v2
+    direction LR
+
+    [*] --> OK : Initial
+
+    OK --> PENDING : Alarm event received\n(within cooldown or dedup window)
+    OK --> NOTIFYING : Alarm event received\n(outside cooldown, first contact)
+
+    PENDING --> NOTIFYING : Cooldown expired
+    PENDING --> OK : RECOVERED event
+
+    NOTIFYING --> NOTIFIED : Notification dispatched successfully
+    NOTIFYING --> NOTIFY_FAILED : All retries exhausted
+    NOTIFY_FAILED --> NOTIFYING : Next escalation cycle
+
+    NOTIFIED --> ACKED : ACK received (any channel)
+    NOTIFIED --> ESCALATING : Timeout elapsed, no ACK
+
+    ESCALATING --> NOTIFIED : Next level notification sent
+    ESCALATING --> MAX_ESCALATED : All levels exhausted, no ACK
+
+    MAX_ESCALATED --> ACKED : Manual ACK
+    MAX_ESCALATED --> OK : RECOVERED event (auto-close)
+
+    ACKED --> OK : RECOVERED event
+
+    OK --> [*]
+```
+
+**State descriptions**:
+
+| State           | Meaning                                        | Entry Condition                 |
+| --------------- | ---------------------------------------------- | ------------------------------- |
+| `OK`            | No active alarm                                | RECOVERED event or initial      |
+| `PENDING`       | Alarm received but suppressed (cooldown/dedup) | Within cooldown window          |
+| `NOTIFYING`     | Actively attempting first contact              | New alarm, cooldown expired     |
+| `NOTIFIED`      | Contact dispatched, awaiting ACK               | Notification sent to T1         |
+| `ACKED`         | Incident acknowledged, escalation halted       | ACK received via any channel    |
+| `ESCALATING`    | ACK timeout elapsed, preparing next level      | Recheck triggers, no ACK found  |
+| `NOTIFY_FAILED` | All channel retries exhausted                  | VMS + fallback all failed       |
+| `MAX_ESCALATED` | T3 notified with no response                   | All escalation levels exhausted |
+
+**State transitions are protected by DynamoDB ConditionExpression** — see §4.9.
+
+### 4.5 DynamoDB Single-Table Design
+
+#### Design Principles
+
+- **Single Table Design (STD)**: All entities in one table, access patterns define the schema
+- **Event Sourcing**: State changes append to an immutable event log
+- **Query First**: Access patterns defined before schema, not after
+
+#### Table Definition
+
+```
+Table Name: oncall-platform
+PK (HASH): pk  [String]
+SK (RANGE): sk  [String]
+TTL: expire_at [Number, epoch seconds]
+```
+
+#### Access Patterns
+
+| Pattern                        | Query                                             |
+| ------------------------------ | ------------------------------------------------- |
+| Load current alarm state       | `pk = ALARM#<alarm_id>, sk = STATE`               |
+| Load alarm event history       | `pk = ALARM#<alarm_id>, sk begins_with EVENT#`    |
+| Get current oncall for service | `pk = ONCALL#<service>, sk = DATE#<YYYY-MM-DD>`   |
+| Get escalation policy          | `pk = POLICY#<service>, sk = CURRENT`             |
+| Get user profile               | `pk = USER#<user_id>, sk = META`                  |
+| List active alarms             | GSI1: `status = ACTIVE`, sorted by created_at     |
+| List alarms by service         | GSI2: `pk begins_with ALARM#, service_name = <x>` |
+
+#### Entity Schemas
+
+**AlarmState** (`pk = ALARM#<alarm_id>, sk = STATE`):
+
+```json
+{
+  "pk": "ALARM#cpu-high-api-prod",
+  "sk": "STATE",
+  "alarm_id": "cpu-high-api-prod",
+  "alarm_name": "CPUUtilization > 90%",
+  "service": "api-service",
+  "severity": "P0",
+  "current_state": "NOTIFIED",
+  "escalation_level": 1,
+  "notify_count": 1,
+  "last_notify_time": 1710000000,
+  "cooldown_expire_time": 1710000300,
+  "ack_status": "UNACKED",
+  "acked_by": null,
+  "ack_time": null,
+  "last_error": null,
+  "idempotency_key": "cpu-high-api-prod#ALARM#1",
+  "created_at": 1710000000,
+  "updated_at": 1710000050,
+  "status": "ACTIVE",
+  "expire_at": 1710086400
+}
+```
+
+> **Idempotency key correction**: The key `alarm_id + alarm_state + escalation_level` replaces the original `alarm_id + state + timestamp`. Timestamp makes the key non-idempotent — the same logical action gets a new key on every retry.
+
+**AlarmEvent** (`pk = ALARM#<alarm_id>, sk = EVENT#<epoch_ms>#<uuid4_prefix>`):
+
+```json
+{
+  "pk": "ALARM#cpu-high-api-prod",
+  "sk": "EVENT#1710000050#a3f2",
+  "event_type": "NOTIFICATION_SENT",
+  "actor": "system",
+  "channel": "feishu_urgent",
+  "target_user": "alice",
+  "escalation_level": 1,
+  "delivery_id": "feiishu-msg-id-xxx",
+  "result": "SUCCESS",
+  "message_content": "P0 Alert: CPUUtilization > 90% on api-service",
+  "timestamp": 1710000050,
+  "expire_at": 1710259200
+}
+```
+
+**OncallSchedule** (`pk = ONCALL#<service>, sk = DATE#<YYYY-MM-DD>`):
+
+```json
+{
+  "pk": "ONCALL#api-service",
+  "sk": "DATE#2026-04-15",
+  "service": "api-service",
+  "date": "2026-04-15",
+  "shifts": [
+    {"start": "00:00", "end": "08:00", "user_id": "alice", "level": 1},
+    {"start": "00:00", "end": "08:00", "user_id": "bob",   "level": 2},
+    {"start": "00:00", "end": "08:00", "user_id": "carol", "level": 3},
+    {"start": "08:00", "end": "16:00", "user_id": "dave",  "level": 1},
+    {"start": "08:00", "end": "16:00", "user_id": "eve",   "level": 2},
+    {"start": "08:00", "end": "16:00", "user_id": "frank", "level": 3}
+  ],
+  "updated_at": 1710000000
+}
+```
+
+> Level 1 = T1 (primary), Level 2 = T2 (backup), Level 3 = T3 (manager/TL)
+
+**EscalationPolicy** (`pk = POLICY#<service>, sk = CURRENT`):
+
+```json
+{
+  "pk": "POLICY#api-service",
+  "sk": "CURRENT",
+  "service": "api-service",
+  "version": 3,
+  "rules": [
+    {
+      "severity": "P0",
+      "levels": [
+        {"level": 1, "target_role": "oncall_primary", "timeout_seconds": 300},
+        {"level": 2, "target_role": "oncall_backup",  "timeout_seconds": 300},
+        {"level": 3, "target_role": "oncall_manager", "timeout_seconds": 600}
+      ],
+      "cooldown_seconds": 300,
+      "notify_channels": ["feishu_urgent", "feishu_bot_fallback"]
+    },
+    {
+      "severity": "P1",
+      "levels": [
+        {"level": 1, "target_role": "oncall_primary", "timeout_seconds": 600},
+        {"level": 2, "target_role": "oncall_backup",  "timeout_seconds": 600}
+      ],
+      "cooldown_seconds": 600,
+      "notify_channels": ["feishu_urgent", "feishu_bot_fallback"]
+    }
+  ]
+}
+```
+
+> **Design correction from original docs**: Timeout is defined **per-level per-severity**, not a flat 300s for all cases. P0 T1 timeout ≠ P1 T2 timeout. This matters for escalation scheduling.
+
+**UserProfile** (`pk = USER#<user_id>, sk = META`):
+
+```json
+{
+  "pk": "USER#alice",
+  "sk": "META",
+  "user_id": "alice",
+  "name": "Alice Zhang",
+  "feishu_open_id": "ou_xxx",
+  "phone": "138xxxxxxxx",
+  "email": "alice@company.com",
+  "team": "api-platform",
+  "role": "engineer",
+  "timezone": "Asia/Shanghai"
+}
+```
+
+#### GSI Design
+
+**GSI1 — Active Alarms Dashboard**:
+
+```
+GSI1-PK: status          (ACTIVE | RESOLVED)
+GSI1-SK: created_at      (Number, epoch)
+```
+
+Query: `GSI1-PK = ACTIVE`, sorted by time → dashboard of all open incidents.
+
+**GSI2 — Alarms by Service**:
+
+```
+GSI2-PK: service         (String, e.g. "api-service")
+GSI2-SK: created_at      (Number)
+```
+
+Query: all alarms for a given service, sorted by recency.
+
+### 4.6 Decision Engine
+
+The Decision Engine is the core brain of Phase I. It takes `(alarm_event, current_state, escalation_policy)` and returns a `Decision`.
+
+```python
+@dataclass
+class Decision:
+    action: Literal["NOTIFY", "ESCALATE", "SUPPRESS", "STOP", "REOPEN"]
+    target_level: int
+    target_user: Optional[User]
+    reason: str
+
+def decision_engine(
+    event: AlarmEvent,
+    state: AlarmState,
+    policy: EscalationPolicy,
+    oncall: OncallSchedule,
+    now: int  # epoch seconds
+) -> Decision:
+
+    # 1. RECOVERED event — close regardless of state
+    if event.alarm_state == "OK":
+        return Decision(action="STOP", reason="RECOVERED")
+
+    # 2. Already ACKED — suppress all further notifications
+    if state.ack_status == "ACKED":
+        return Decision(action="SUPPRESS", reason="ALREADY_ACKED")
+
+    # 3. Within cooldown window — suppress but update last_seen
+    if now < state.cooldown_expire_time:
+        remaining = state.cooldown_expire_time - now
+        return Decision(action="SUPPRESS", reason=f"IN_COOLDOWN:{remaining}s")
+
+    # 4. First notification (no prior notify or state is OK/PENDING)
+    if state.notify_count == 0 or state.current_state in ("OK", "PENDING"):
+        user = oncall.get_user_at_level(1, now)
+        return Decision(action="NOTIFY", target_level=1, target_user=user,
+                        reason="FIRST_CONTACT")
+
+    # 5. Escalation check — is it time to escalate?
+    level_config = policy.get_level_config(event.severity, state.escalation_level)
+    elapsed = now - state.last_notify_time
+    if elapsed >= level_config.timeout_seconds:
+        next_level = state.escalation_level + 1
+        max_level = policy.max_level(event.severity)
+
+        if next_level > max_level:
+            # All levels exhausted — stop, alert is in MAX_ESCALATED
+            return Decision(action="STOP", reason="MAX_ESCALATION_REACHED",
+                            target_level=state.escalation_level)
+
+        user = oncall.get_user_at_level(next_level, now)
+        return Decision(action="ESCALATE", target_level=next_level, target_user=user,
+                        reason=f"TIMEOUT:level{state.escalation_level}→{next_level}")
+
+    # 6. Within escalation wait window — nothing to do
+    remaining_wait = level_config.timeout_seconds - elapsed
+    return Decision(action="SUPPRESS", reason=f"AWAITING_ACK:{remaining_wait}s")
+```
+
+### 4.7 Escalation & Time-Driven Scheduling
+
+#### The Core Problem
+
+Lambda is event-driven. Escalation is time-driven. The bridge between them must be reliable.
+
+**Why not SQS delay queue?** SQS maximum delay is **15 minutes**. P1 escalation timeout may be 10 minutes (fine), but P0 T3 escalation timeout may be 30 minutes (fails). SQS delay queues cannot be used as the sole scheduling mechanism.
+
+**Why not CloudWatch Events / cron?** Not granular enough for per-alarm scheduling.
+
+#### Recommended: EventBridge Scheduler
+
+After each notification is sent, the Lambda worker creates an EventBridge Scheduler one-time schedule:
+
+```python
+def schedule_recheck(alarm_id: str, check_at_epoch: int, idempotency_key: str):
+    scheduler.create_schedule(
+        Name=f"recheck-{alarm_id}-{idempotency_key}",
+        ScheduleExpression=f"at({epoch_to_iso(check_at_epoch)})",
+        Target={
+            "Arn": SQS_RECHECK_QUEUE_ARN,
+            "RoleArn": SCHEDULER_ROLE_ARN,
+            "Input": json.dumps({
+                "source": "recheck",
+                "alarm_id": alarm_id,
+                "expected_level": current_level,
+                "scheduled_at": check_at_epoch
+            })
+        },
+        ActionAfterCompletion="DELETE",
+        FlexibleTimeWindow={"Mode": "OFF"},
+        ClientToken=idempotency_key  # prevents duplicate schedules
+    )
+```
+
+**Schedule lifecycle**:
+
+```
+Lambda notifies T1
+  → Creates schedule "recheck at now+300s"
+  → Schedule fires → SQS recheck message
+  → Lambda Decision Engine: ACK? → STOP; else → ESCALATE to T2
+  → Creates new schedule "recheck at now+300s"
+  → ...
+```
+
+**ACK cancels the schedule**:
+
+```python
+def on_ack_received(alarm_id, level):
+    # Write ACKED to DynamoDB
+    ddb.update_item(pk=f"ALARM#{alarm_id}", sk="STATE",
+                    UpdateExpression="SET ack_status = :a",
+                    ConditionExpression="escalation_level = :l",
+                    ...)
+    # Delete pending recheck schedule
+    scheduler.delete_schedule(Name=f"recheck-{alarm_id}-level{level}-...")
+```
+
+> **Important**: EventBridge Scheduler has soft limit of 1M schedules per region. At scale, ensure schedule cleanup is reliable. The `ActionAfterCompletion="DELETE"` handles auto-cleanup after firing.
+
+### 4.8 ACK Mechanism
+
+ACK must be possible from multiple surfaces. All paths converge on the same DynamoDB write.
+
+#### ACK Sources
+
+| Source                 | Method                                        | Implementation                            |
+| ---------------------- | --------------------------------------------- | ----------------------------------------- |
+| Feishu Bot             | User replies `/ack <alarm_id>` in DM or group | Feishu event webhook → Lambda ACK handler |
+| Feishu Urgent callback | User taps "I got it" button                   | Feishu urgent_message callback → Lambda   |
+| Aliyun VMS DTMF        | User presses `1` during phone call            | Aliyun VMS callback → Lambda ACK handler  |
+| Web API                | `POST /api/v1/ack`                            | API Gateway → Lambda                      |
+| Auto-ACK               | RECOVERED event closes incident               | Decision Engine action=STOP               |
+
+#### ACK Write (Atomic, Idempotent):
+
+```python
+def process_ack(alarm_id: str, acked_by: str, source: str, now: int):
+    try:
+        ddb.update_item(
+            Key={"pk": f"ALARM#{alarm_id}", "sk": "STATE"},
+            UpdateExpression="""
+                SET ack_status = :acked,
+                    acked_by = :user,
+                    ack_time = :t,
+                    current_state = :state,
+                    updated_at = :t
+            """,
+            ConditionExpression="ack_status = :unacked",  # only if not already acked
+            ExpressionAttributeValues={
+                ":acked": "ACKED",
+                ":unacked": "UNACKED",
+                ":user": acked_by,
+                ":t": now,
+                ":state": "ACKED"
+            }
+        )
+        # Append ACK event to timeline
+        append_event(alarm_id, "ACK_RECEIVED", actor=acked_by, source=source)
+        # Cancel pending recheck schedule
+        cancel_recheck_schedule(alarm_id)
+        # Post confirmation to Feishu group
+        post_ack_confirmation(alarm_id, acked_by)
+
+    except ddb.ConditionalCheckFailedException:
+        # Already ACKed — idempotent, ignore
+        pass
+```
+
+### 4.9 Idempotency
+
+Idempotency is the most critical correctness property of this system. SQS delivers messages at-least-once; Lambda may be invoked multiple times for the same message.
+
+#### Idempotency Key Design
+
+```
+idempotency_key = sha256(alarm_id + "#" + alarm_state + "#" + str(escalation_level))
+```
+
+**Why not include timestamp?** Timestamp changes on every retry, defeating idempotency. The key must encode the *logical action*, not the *invocation moment*.
+
+**Why include escalation_level?** A T1 notification and a T2 notification are different logical actions even for the same alarm — they must not be collapsed.
+
+#### DynamoDB ConditionExpression Pattern
+
+Before any state-mutating write, the Lambda uses ConditionExpression to ensure:
+
+1. The expected current state matches
+2. The idempotency key hasn't already been processed
+
+```python
+def write_notified_state(alarm_id, level, new_idempotency_key):
+    ddb.update_item(
+        Key={"pk": f"ALARM#{alarm_id}", "sk": "STATE"},
+        UpdateExpression="""
+            SET current_state = :notified,
+                escalation_level = :level,
+                notify_count = notify_count + :one,
+                last_notify_time = :now,
+                cooldown_expire_time = :cooldown,
+                idempotency_key = :ikey,
+                updated_at = :now
+        """,
+        ConditionExpression="""
+            (attribute_not_exists(idempotency_key) OR idempotency_key <> :ikey)
+            AND current_state IN (:ok, :pending, :notified)
+        """,
+        ExpressionAttributeValues={
+            ":ikey": new_idempotency_key,
+            ":level": level,
+            ":notified": "NOTIFIED",
+            ":ok": "OK", ":pending": "PENDING",
+            ...
+        }
+    )
+```
+
+On `ConditionalCheckFailedException`: this is a **duplicate delivery** — log and discard silently.
+
+### 4.10 Reliability & Failure Handling
+
+#### Failure Matrix
+
+| Failure Point                         | Detection                                             | Recovery                                     |
+| ------------------------------------- | ----------------------------------------------------- | -------------------------------------------- |
+| SNS publish failure                   | CloudWatch Alarm on SNS `NumberOfNotificationsFailed` | CloudWatch retry + operator alert            |
+| SQS → Lambda trigger failure          | DLQ depth alarm                                       | DLQ processor Lambda re-injects messages     |
+| Lambda OOM / timeout                  | CloudWatch `Errors` metric                            | SQS visibility timeout expires → retry       |
+| DynamoDB throttle                     | `ProvisionedThroughputExceededException`              | Lambda retry (RetryableError), SQS backoff   |
+| VMS/Feishu call failure               | `NotifyResult.success = False`                        | Fallback channel chain (see §4.3)            |
+| EventBridge schedule creation failure | Caught exception in Lambda                            | Append `SCHEDULE_FAILED` event, page via DLQ |
+| DynamoDB ConditionExpression conflict | `ConditionalCheckFailedException`                     | Idempotent discard (not an error)            |
+
+#### DLQ Processing
+
+DLQ messages are inspected by a separate `dlq-processor` Lambda on a schedule (every 5 min). It:
+
+1. Parses the poisoned message
+2. Logs structured error to CloudWatch
+3. Posts a Feishu Bot alert to `#oncall-platform-alerts` channel
+4. Does NOT re-inject automatically — requires operator approval for safety
+
+#### Alarm Storm Mitigation
+
+- Lambda `ReservedConcurrency = 10` — caps parallel executions
+- SQS buffers the backlog; messages are processed sequentially per alarm due to DynamoDB state locking
+- DynamoDB capacity: use on-demand mode for Phase I (traffic is spiky and unpredictable)
+- Per-service rate limiting: EscalationPolicy can set `max_notifications_per_hour` per service
+
+### 4.11 Observability
+
+#### Required CloudWatch Metrics
+
+| Metric                     | Source               | Alarm Threshold |
+| -------------------------- | -------------------- | --------------- |
+| `NotifySuccess`            | Lambda PutMetricData | -               |
+| `NotifyFailure`            | Lambda PutMetricData | > 0 in 5 min    |
+| `EscalationTriggered`      | Lambda PutMetricData | -               |
+| `ACKLatencySeconds`        | Lambda PutMetricData | P95 > 300s      |
+| `DLQDepth`                 | SQS built-in         | > 0             |
+| `LambdaErrors`             | Lambda built-in      | > 2 in 5 min    |
+| `ScheduleCreationFailures` | Lambda PutMetricData | > 0             |
+
+#### Structured Log Schema (all Lambda logs must conform)
+
+```json
+{
+  "timestamp": "2026-04-15T10:00:00Z",
+  "level": "INFO",
+  "alarm_id": "cpu-high-api-prod",
+  "service": "api-service",
+  "severity": "P0",
+  "action": "NOTIFY",
+  "escalation_level": 1,
+  "target_user": "alice",
+  "channel": "feishu_urgent",
+  "result": "SUCCESS",
+  "delivery_id": "feishu-msg-xxx",
+  "idempotency_key": "abc123",
+  "duration_ms": 234,
+  "lambda_request_id": "xxx-yyy-zzz"
+}
+```
+
+#### Operational Dashboards (CloudWatch)
+
+- Active alarms by severity (real-time)
+- Notification success rate (24h rolling)
+- Average ACK time by severity
+- Escalation rate (% of alarms that reached T2/T3)
+- DLQ depth over time
