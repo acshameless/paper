@@ -28,3 +28,11 @@
 - [ ] https://unsloth.ai/docs/zh/ji-chu/inference-and-deployment/saving-to-gguf/speculative-decoding
 - [ ] https://blog.csdn.net/gitblog_01139/article/details/150959228
 - [ ] https://lilianweng.github.io/posts/2026-07-04-harness/
+
+
+---
+- [] https://lilianweng.github.io/posts/2026-07-04-harness/
+- [] https://openai.com/index/unrolling-the-codex-agent-loop/
+- [] https://arxiv.org/abs/2510.04618
+- [] https://arxiv.org/abs/2601.21557
+- [] 
