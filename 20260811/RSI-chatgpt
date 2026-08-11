@@ -1,0 +1,2384 @@
+下面这份报告我按“**研究综述 + 工程框架 + Frontier Lab 事实核查**”来写，而不是把所有带有 *self-improvement / recursive / self-evolving* 标签的论文简单堆在一起。
+
+尤其重要的一点是：**我会严格区分“真正的 RSI”与“迭代优化、Self-Refine、Agent Learning、AutoResearch、Harness Evolution”等相邻概念。** 目前公开证据已经足以说明 AI 正在进入“AI 帮助改进 AI”的阶段，但还不足以严谨地宣布已经出现了完全自主、开放式、无人工干预的 intelligence explosion。
+
+---
+
+# LLM & Agent Recursive Self-Improvement（RSI）
+
+## From Self-Refinement to Autonomous AI Research
+
+**Research report · Evidence cutoff: 2026-08-11**
+
+---
+
+## 0. Executive Summary
+
+Recursive Self-Improvement（RSI）最初是一个关于“机器能够设计更好的机器”的理论命题。I. J. Good 在 1965 年提出 ultraintelligent machine 时已经明确指出：如果机器在所有智力活动上超过人类，那么“设计机器”本身也属于智力活动，因此它可能设计出比自己更好的机器，从而形成 intelligence explosion。([科学直通车][1])
+
+今天的 LLM/Agent 研究正在把这个思想从理论问题逐渐转化成工程问题，但**现实中的 RSI 并不是单一技术，而是一系列不同闭环的组合**：
+
+> **Output → Memory → Skill → Harness → Workflow → Training → Model → AI Research → Successor Model**
+
+最早的 LLM 自改进工作通常只改变**输出**，例如 Self-Refine；随后出现通过反思记忆改善 Agent 行为的 Reflexion、通过自身生成 reasoning data 训练自己的 STaR、通过代码和环境反馈不断学习技能的 Voyager，以及通过进化搜索自动生成 reward function 的 Eureka。([arXiv][2])
+
+2024–2026 年真正重要的变化，是研究重点从：
+
+> **“让模型回答得更好”**
+
+转向：
+
+> **“让产生答案的整个系统变得更好。”**
+
+因此，**Agent Harness、Context、Memory、Tools、Workflow、Evaluator、Training Pipeline 本身开始成为优化对象。**
+
+这一变化可以从 Darwin Gödel Machine、Agentic Context Engineering、Meta Context Engineering、Agentic Harness Engineering、Self-Harness、Continual Harness、MetaSkill-Evolve 等工作中清楚看到。([arXiv][3])
+
+2025–2026 年，Frontier AI labs 的方向也开始出现明显分化：
+
+* Anthropic 已公开把 **Recursive Self-Improvement** 作为正式研究主题，并明确表示“full RSI 还没有发生”，但 AI 已经越来越多地参与 Anthropic 自身的开发过程。([Anthropic][4])
+* Google DeepMind 的 AlphaEvolve 已经把 LLM + evolutionary search + automated evaluator 用于算法发现和基础设施优化，并且官方明确表示它优化过包括自身训练过程在内的 AI infrastructure。([Google DeepMind][5])
+* OpenAI 正在公开建设 self-improving agent loop，并进一步用 GPT-Red 通过 self-play 自动生成攻击，再用于训练更鲁棒的后续模型；这属于非常明确的“模型帮助改进后续模型”的闭环，但还不是完整 RSI。([OpenAI][6])
+* Sakana AI 已经把 AI Scientist、Darwin Gödel Machine、Digital Red Queen 等方向明确放进其 Recursive Self-Improvement Lab。([Sakana AI][7])
+* Recursive 正在构建自动 AI research loop，让 Agent 自动提出 idea、实现、实验、验证并选择下一轮实验，并明确称其为 recursively self-improving AI。([Recursive][8])
+* Weco AI 在 2026 年 7 月公开宣布 AIDE²，并声称它通过“autoresearch on autoresearch”实现了 Level-1 RSI。这个结果非常值得关注，但目前应被视为 **company-reported evidence**，因为其完整 technical report 当时尚未公开。([Weco AI][9])
+* Inherent 更进一步提出的不是“一个 Agent 自我改进”，而是**整个 AI research organization 递归自我改进**。([inherent][10])
+* Ricursive Intelligence 选择从芯片设计切入，通过 AI ↔ hardware co-evolution 构建递归闭环。([Ricursive][11])
+* Ineffable Intelligence 则代表另一条路线：不是继续主要依赖人类数据，而是通过 reinforcement learning / experience-driven learning 构建持续学习的“superlearner”。([Ineffable][12])
+
+因此，截至 **2026 年 8 月**，最严谨的结论不是：
+
+> “RSI 已经发生了。”
+
+而是：
+
+> **AI development 已经进入“AI participates in the development of AI”的阶段；若把 RSI 定义为能够持续改进自身的 improvement machinery，那么多个系统已经出现了有限形式的 RSI。若把 RSI 定义为能够自主设计、训练、验证并部署更强 successor model 的开放式闭环，那么公开证据仍不足以证明它已经实现。**
+
+---
+
+# 1. What Exactly Is Recursive Self-Improvement?
+
+## 1.1 Good：最初的思想
+
+I. J. Good 在 1965 年的经典文章 *Speculations Concerning the First Ultraintelligent Machine* 中提出：
+
+一个 ultraintelligent machine 如果在所有智力活动上远超人类，那么它也应该能够设计更好的机器，因此会形成进一步的 intelligence explosion。([Organism Earth][13])
+
+这个思想真正重要的地方不是“AI 会变得更聪明”，而是：
+
+[
+Intelligence_t
+\rightarrow
+DesignCapability_t
+\rightarrow
+BetterAI_{t+1}
+\rightarrow
+HigherIntelligence_{t+1}
+]
+
+即：
+
+[
+I_{t+1}=F(I_t)
+]
+
+而真正具有爆炸潜力的是：
+
+[
+\frac{\Delta I_{t+1}}{\Delta I_t}
+
+>
+
+\frac{\Delta I_t}{\Delta I_{t-1}}
+]
+
+换句话说：
+
+> **系统不仅变强，而且变得越来越擅长让自己变强。**
+
+这也是为什么 RSI 与普通 self-improvement 的核心区别不是“有没有 feedback”，而是：
+
+> **improvement mechanism 本身是否进入优化闭环。**
+
+---
+
+# 2. Broad RSI vs. Strict RSI
+
+这是理解整个领域最重要的 distinction。
+
+### Broad RSI
+
+广义 RSI 可以定义为：
+
+> 一个 AI system 利用自身产生的信息、经验、代码、评价、训练数据或研究结果，改善下一轮 AI system 的能力。
+
+例如：
+
+```text
+Model
+  ↓
+generates code
+  ↓
+runs experiments
+  ↓
+finds better training method
+  ↓
+trains better model
+```
+
+这已经具有 RSI 的结构。
+
+---
+
+### Strict RSI
+
+严格意义上的 RSI 应该要求：
+
+1. AI 能够产生改进；
+2. 改进能够被客观验证；
+3. 改进能够进入下一代系统；
+4. 下一代系统拥有更强的 improvement capability；
+5. 下一代系统能够进一步改善 improvement process；
+6. 循环能够持续，而不是依赖每轮人工重新设计。
+
+因此：
+
+```text
+Self-Refine
+```
+
+不是严格 RSI。
+
+```text
+Agent improves its prompt
+```
+
+通常也不是。
+
+```text
+Agent improves its own harness
+```
+
+开始接近 RSI。
+
+```text
+Agent improves the mechanism
+that improves its harness
+```
+
+才真正进入 recursive territory。
+
+---
+
+# 3. A More Useful RSI Taxonomy
+
+我建议不要简单按照“有没有 self-improvement”分类，而按照**系统到底在优化什么**分类。
+
+| Level | 优化对象                              | 典型机制                                           | RSI程度      |
+| ----- | --------------------------------- | ---------------------------------------------- | ---------- |
+| L0    | Output                            | Self-Refine / Reflection                       | 非 RSI      |
+| L1    | Memory / Skill / Context          | Reflexion / ACE / Skill Evolution              | 弱 RSI      |
+| L2    | Harness / Workflow                | Harness evolution / DGM                        | RSI-like   |
+| L3    | Training / Policy / Weights       | Self-training / self-play / continual learning | 强 RSI      |
+| L4    | AI Research Process               | AutoResearch / AI Scientist                    | 更强 RSI     |
+| L5    | Improvement Mechanism             | Meta-improvement / Hyperagents                 | 真正递归       |
+| L6    | Successor Model                   | AI designs/trains/evaluates successor          | Strict RSI |
+| L7    | Open-ended Intelligence Explosion | 持续、开放式、自加速                                     | 尚未证明       |
+
+这个划分与 2026 年最新 RSI survey 的基本方向非常接近：最新综述把 self-improvement 区分为 deployment behavior、policy、evaluator 和 research process，并进一步按照 human-in-the-loop 到 fully closed loop 分类。该综述统计分析了 2024–2026 年约 1,250 篇 arXiv 工作，并明确指出目前的 bounded self-refinement 与 open-ended RSI 不能混为一谈。([arXiv][14])
+
+---
+
+# 4. The RSI Stack
+
+我认为你笔记中最有价值的部分其实是：
+
+> **model 之外的 deployment system / harness 同样是 intelligence substrate。**
+
+可以把一个现代 Agent 写成：
+
+[
+Agent =
+Model
++
+Memory
++
+Tools
++
+Planning
++
+Action
++
+Context
++
+Evaluator
++
+Runtime
+]
+
+进一步：
+
+[
+Agent_t =
+(\theta_t, H_t, M_t, W_t, E_t)
+]
+
+其中：
+
+* (\theta)：Model weights
+* (H)：Harness
+* (M)：Memory
+* (W)：Workflow
+* (E)：Environment / tools / evaluator
+
+那么所谓 self-improvement 就不应该只写成：
+
+[
+\theta_t \rightarrow \theta_{t+1}
+]
+
+而应该是：
+
+[
+(\theta_t,H_t,M_t,W_t,E_t)
+\rightarrow
+(\theta_{t+1},H_{t+1},M_{t+1},W_{t+1},E_{t+1})
+]
+
+这解释了为什么今天 Agent research 的一个关键趋势是：
+
+> **The model is no longer the whole intelligence.**
+
+---
+
+# 5. Why Harness Matters
+
+你的笔记：
+
+> “A harness is the system surrounding a base model that orchestrates execution and decides how the model thinks and plans, calls tools and acts, perceives and manages context, stores artifacts, and evaluates results.”
+
+这个定义基本成立，而且现在已经得到大量研究支持。
+
+SWE-agent 在 2024 年已经证明，针对 software engineering 设计专门的 Agent-Computer Interface 会显著改变 LLM Agent 的能力。其核心观点就是：Agent 与计算机交互的 interface 本身是能力的重要组成部分。([arXiv][15])
+
+到了 2026 年，研究已经从：
+
+> “design a better harness”
+
+进一步进入：
+
+> **“let the agent design a better harness.”**
+
+例如 Agentic Harness Engineering 将 harness 的 component、experience、decision 都变成可观察对象，通过 closed-loop 自动演化 harness；论文报告十轮迭代后 Terminal-Bench 2 pass@1 从 69.7% 提升到 77.0%。([数字对象标识符][16])
+
+这实际上非常接近你提出的：
+
+> **Harness Engineering → Meta-Methodology**
+
+也就是说：
+
+```text
+Human designs workflow
+        ↓
+Agent executes workflow
+        ↓
+Agent observes failures
+        ↓
+Agent modifies workflow
+        ↓
+Agent evaluates modified workflow
+        ↓
+Better workflow
+        ↓
+Agent becomes better at improving workflow
+```
+
+这就是 RSI 的工程化雏形。
+
+---
+
+# 6. File System as Persistent Memory
+
+你的另一个判断非常重要：
+
+> **File System as Persistent Memory**
+
+这并不是简单的“把聊天记录存起来”。
+
+它的意义在于把：
+
+[
+Context_t
+]
+
+变成：
+
+[
+PersistentState_{t+1}
+]
+
+例如：
+
+```text
+agent/
+├── memory/
+│   ├── failures.md
+│   ├── successful_strategies.md
+│   └── hypotheses.md
+├── skills/
+│   ├── sql.md
+│   ├── coding.md
+│   └── research.md
+├── experiments/
+│   ├── exp001/
+│   ├── exp002/
+│   └── exp003/
+└── evals/
+    ├── benchmark.json
+    └── regression.json
+```
+
+于是：
+
+```text
+Execution
+   ↓
+Observation
+   ↓
+Memory
+   ↓
+Strategy
+   ↓
+Next Execution
+```
+
+形成 persistent learning loop。
+
+这也是为什么 ACE、Meta Context Engineering、Continual Harness 等工作值得关注：它们开始把 **context / memory / skills** 当成可以持续优化的系统状态，而不是静态 prompt。ACE 将 context 设计成能够通过 generation、reflection、curation 持续演化的 playbook，并报告在 agent 和 finance benchmark 上的性能提升。([Hugging Face][17])
+
+---
+
+# 7. Classic Research Lineage
+
+## 7.1 Gödel Machine — 2003
+
+如果要寻找严格意义上的理论祖先，Jürgen Schmidhuber 的 **Gödel Machine** 比 LLM self-reflection 更接近真正 RSI。
+
+Gödel Machine 是一个 self-referential universal problem solver，它可以修改自己的程序，但原则上只有当内部 proof searcher 能证明修改会提高未来 utility 时才执行修改。([IDSIA][18])
+
+核心结构：
+
+```text
+Current Program
+      ↓
+Search for proof
+      ↓
+"Changing myself is beneficial"
+      ↓
+Rewrite myself
+      ↓
+Better Program
+```
+
+它与今天 DGM 的区别非常有意思：
+
+> Gödel Machine 是 **proof-driven self-improvement**。
+
+> DGM 是 **empirical-evaluation-driven self-improvement**。
+
+---
+
+# 8. STaR — 2022
+
+**STaR: Bootstrapping Reasoning With Reasoning** 是 LLM self-training 的重要早期工作。
+
+它让模型：
+
+1. 自己生成 reasoning；
+2. 检查答案；
+3. 对错误答案利用正确答案重新生成 reasoning；
+4. 将成功 reasoning 加入训练集；
+5. fine-tune；
+6. 重复。
+
+即：
+
+[
+Model
+\rightarrow
+Synthetic Reasoning
+\rightarrow
+Filter
+\rightarrow
+Training
+\rightarrow
+Better Model
+]
+
+STaR 的重要性在于：
+
+> **模型第一次比较明确地参与了自己的 training-data generation。**
+
+([arXiv][19])
+
+---
+
+# 9. Self-Refine — 2023
+
+Self-Refine 把 self-improvement 放到了 inference-time：
+
+```text
+Generate
+ ↓
+Feedback
+ ↓
+Refine
+ ↓
+Feedback
+ ↓
+Refine
+```
+
+它不修改模型权重，而是让同一个 LLM 既负责生成、评价又负责修改。论文在七类任务上报告了平均约 20 个百分点的绝对性能提升。([arXiv][2])
+
+它很重要，但**严格来说不是 RSI**。
+
+原因很简单：
+
+> Model 没有变。
+
+变的是：
+
+[
+Output_{t+1}=F(Model, Output_t)
+]
+
+而不是：
+
+[
+Model_{t+1}=F(Model_t)
+]
+
+---
+
+# 10. Reflexion — 2023
+
+Reflexion 将这个思想进一步 Agent 化。
+
+Agent：
+
+```text
+Act
+ ↓
+Environment feedback
+ ↓
+Verbal reflection
+ ↓
+Episodic memory
+ ↓
+Next trial
+```
+
+它不更新 weights，而是把 reflection 写进 episodic memory。论文在 HumanEval 上报告了 91% pass@1 的结果。([arXiv][20])
+
+这其实就是今天 Agent memory learning 的祖先之一。
+
+---
+
+# 11. Voyager — 2023
+
+Voyager 更进一步。
+
+它在 Minecraft 中：
+
+* 自动 curriculum；
+* 自动探索；
+* 自动产生 executable skills；
+* 建立 skill library；
+* 根据环境反馈修改程序。
+
+因此：
+
+[
+Experience
+\rightarrow
+Skill
+\rightarrow
+Library
+\rightarrow
+Future Capability
+]
+
+Voyager 不需要 fine-tuning GPT-4，而是通过可执行 skill 的累积实现持续能力增长。([arXiv][21])
+
+这说明：
+
+> **Agent 可以不改变 model weights，也能够产生真正持久的能力增长。**
+
+---
+
+# 12. Eureka — 2023
+
+Eureka 是另一个非常重要的桥梁。
+
+它不是让 LLM 自己回答更好，而是让 LLM：
+
+> **自动编写 reward function。**
+
+然后：
+
+```text
+LLM
+ ↓
+Reward Code
+ ↓
+RL Training
+ ↓
+Evaluation
+ ↓
+Reflection
+ ↓
+Better Reward Code
+```
+
+论文报告，在 29 个 RL environments 中，Eureka 生成的 reward 在 83% 的任务上超过 human-engineered reward，并获得平均 52% 的 normalized improvement。([arXiv][22])
+
+这一步非常关键：
+
+> **AI 开始优化“训练 AI 的程序”。**
+
+这已经比 Self-Refine 更接近 RSI。
+
+---
+
+# 13. The AI Scientist — 2024 → 2026
+
+Sakana AI 的 **The AI Scientist** 是 RSI 路线中的关键 milestone。
+
+它把：
+
+```text
+Idea
+ ↓
+Code
+ ↓
+Experiment
+ ↓
+Analysis
+ ↓
+Paper
+ ↓
+Review
+```
+
+整个 scientific workflow 自动化。
+
+原始论文明确提出，可以不断重复这个过程，使 scientific discovery 本身形成 open-ended loop。([arXiv][23])
+
+2025 年 AI Scientist-v2 进一步引入 agentic tree search，并实现了完全 AI-generated paper 通过 ICLR workshop peer review 的实验。([arXiv][24])
+
+到 2026 年 3 月，Sakana 宣布相关工作已经正式发表于 **Nature**。([Sakana AI][25])
+
+这一步的意义是：
+
+> **AI 不再只是使用科学知识，而开始参与产生新的科学知识。**
+
+---
+
+# 14. Darwin Gödel Machine — 2025
+
+如果只能选一篇最值得作为现代 RSI 核心论文阅读的工作，我会把：
+
+> **Darwin Gödel Machine**
+
+放在第一梯队。
+
+DGM 的关键思想是：
+
+> Agent 不仅解决任务，而且可以修改自己的代码。
+
+它维护一个 archive：
+
+```text
+Agent A
+ ├── A1
+ │    ├── A11
+ │    └── A12
+ ├── A2
+ │    └── A21
+ └── A3
+```
+
+每一个 agent 都可能产生新的 agent。
+
+然后：
+
+```text
+Generate
+ ↓
+Modify
+ ↓
+Evaluate
+ ↓
+Keep
+ ↓
+Mutate again
+```
+
+这与 biological evolution 非常相似。
+
+论文报告：
+
+* SWE-bench：20.0% → 50.0%
+* Polyglot：14.2% → 30.7%
+
+而且改进内容包括 code editing tools、long-context management、peer-review mechanisms 等。([arXiv][3])
+
+最重要的一句话是：
+
+> **DGM improves not only the solution, but the agent that produces solutions.**
+
+这正是 RSI 的核心。
+
+---
+
+# 15. 2026: Meta-Improvement
+
+2026 年出现了一个非常明显的新趋势：
+
+> **不满足于 self-improving agent，而开始研究 self-improving improver。**
+
+MetaSkill-Evolve 就是典型例子。
+
+普通 self-evolving agent：
+
+```text
+Task Skill
+   ↓
+Improve Task Skill
+```
+
+MetaSkill-Evolve：
+
+```text
+Task Skill
+      ↑
+      │
+Improvement Process
+      ↑
+      │
+Meta-Skill
+```
+
+也就是说，它同时优化：
+
+[
+Skill
+]
+
+以及：
+
+[
+How\ to\ improve\ Skill
+]
+
+论文报告在 OfficeQA、SealQA 和 ALFWorld 上分别取得 +23.54、+16.09 和 +1.92 个百分点的 held-out test accuracy，相对于 raw backbone。([arXiv][26])
+
+这一步是从：
+
+> self-improvement
+
+走向：
+
+> **recursive self-improvement**
+
+的重要结构性变化。
+
+---
+
+# 16. Hyperagents
+
+2026 年的 **Hyperagents** 更直接地解决这个问题。
+
+传统 DGM 有一个限制：
+
+> coding capability 与 self-improvement capability 高度耦合。
+
+Hyperagents 把 task agent 和 meta agent 放进一个可编辑程序中，并且：
+
+> **meta-level modification procedure itself is editable.**
+
+因此：
+
+```text
+Agent
+ ├── Task Solver
+ └── Meta Solver
+       ↓
+   modifies Task Solver
+       ↓
+   modifies Meta Solver
+       ↓
+   better improvement process
+```
+
+论文报告 DGM-Hyperagents 能够在多个 domain 上持续改善 task performance，同时改善生成下一代 agents 的机制，例如 persistent memory 和 performance tracking。([arXiv][27])
+
+从概念上说，这是目前公开研究里非常接近你所说：
+
+> **“meta-methodology”**
+
+的一条路线。
+
+---
+
+# 17. Context Engineering Is Part of RSI
+
+你的 notes 中这一段非常值得保留：
+
+> Harness engineering will evolve toward meta-methodology.
+
+2025–2026 的 Context Engineering 研究实际上正在验证这一点。
+
+ACE：
+
+```text
+Execution
+ ↓
+Feedback
+ ↓
+Generator
+ ↓
+Reflector
+ ↓
+Curator
+ ↓
+Evolving Context
+```
+
+Meta Context Engineering 更进一步：
+
+```text
+Task Agent
+      ↓
+Context Skill
+      ↓
+Meta-Agent
+      ↓
+Improve Context Skill
+```
+
+其论文报告多个 domain 上相对于既有 agentic context engineering 方法获得 5.6%–53.8% relative improvement。([Hugging Face][28])
+
+因此可以得到一个很重要的结论：
+
+> **Prompt Engineering → Context Engineering → Harness Engineering → Meta-Harness Engineering**
+
+这很可能是 Agent RSI 的一条真实技术演化路径。
+
+---
+
+# 18. Agentic Harness Engineering
+
+2026 年的 Agentic Harness Engineering 是这个方向的重要工程化证据。
+
+它把 harness 的三个部分显式化：
+
+### Component Observability
+
+知道：
+
+> 我到底可以修改什么？
+
+### Experience Observability
+
+知道：
+
+> 从过去几百万 token 的 trajectory 中，哪些经验真的有用？
+
+### Decision Observability
+
+知道：
+
+> 我这次修改到底预测会带来什么变化？
+
+于是：
+
+[
+Edit
+\rightarrow
+Prediction
+\rightarrow
+Execution
+\rightarrow
+Measurement
+\rightarrow
+Verification
+]
+
+形成一个真正可审计的 improvement loop。([数字对象标识符][16])
+
+这比简单的：
+
+> “让 Agent 自己修改 prompt”
+
+严谨得多。
+
+---
+
+# 19. The Most Important 2026 Trend: AutoResearch
+
+2026 年真正值得关注的不是“AI 能不能反思”，而是：
+
+> **AI 能不能自动做 AI research。**
+
+因为一旦：
+
+[
+AI
+\rightarrow
+AI\ Research
+\rightarrow
+Better\ Training
+\rightarrow
+Better\ AI
+]
+
+成立，RSI 才真正开始接近 Good 的原始思想。
+
+---
+
+# 20. Frontier Lab Evidence
+
+## 20.1 Anthropic — strongest public explicit statement
+
+Anthropic 在 2026 年公开文章 **When AI builds itself** 中直接使用了：
+
+> Recursive Self-Improvement
+
+并明确表示：
+
+> **“We are not there yet.”**
+
+即 Anthropic 自己并没有声称已经实现完整 RSI。([Anthropic][4])
+
+但同时 Anthropic 提供了非常有价值的内部 evidence：
+
+* AI 已越来越多参与 Anthropic 自身的软件开发；
+* coding agents 可以独立运行代码；
+* agents 可以委派长时间任务；
+* AI 完成任务的时间跨度大约每四个月翻倍；
+* Claude Opus 4.6 已达到约 12 小时级别的 software tasks；
+* Anthropic 表示其工程师当前每季度交付的代码量约为 2021–2025 平均水平的 8 倍。([Anthropic][4])
+
+因此 Anthropic 的实际 trajectory 是：
+
+```text
+AI assists AI development
+        ↓
+AI writes more AI-development code
+        ↓
+AI runs experiments
+        ↓
+AI performs longer R&D tasks
+        ↓
+AI participates in model development
+        ↓
+Potentially:
+AI designs successor
+```
+
+但最后一步目前没有公开证据证明已经完全闭环。
+
+---
+
+# 21. OpenAI — Measurable Self-Improvement
+
+OpenAI 的路线更加工程化。
+
+2026 年 5 月，OpenAI 发布：
+
+> **Building self-improving tax agents with Codex**
+
+其核心 loop 是：
+
+```text
+Human correction
+       ↓
+Product trace
+       ↓
+New evaluation
+       ↓
+Codex climbs the hill
+       ↓
+Better agent
+```
+
+也就是说：
+
+> **真实用户纠错 → 转化为 eval → Agent 优化自身**
+
+([OpenAI][6])
+
+这非常接近你提出的：
+
+> Evaluation is the accelerator of RSI.
+
+因为没有可靠 evaluator，self-improvement 很容易退化成：
+
+```text
+Model says it is better
+      ↓
+Model believes itself
+      ↓
+Model says it is even better
+```
+
+这不是 RSI，而是 self-confirmation loop。
+
+---
+
+# 22. OpenAI GPT-Red — Self-Play as Safety RSI
+
+OpenAI 在 2026 年 7 月公开的 GPT-Red 是另一个非常重要的例子。
+
+GPT-Red 是自动 red-team model：
+
+```text
+Attacker
+   ↓
+Attack
+   ↓
+Defender
+   ↓
+Failure
+   ↓
+Better attack
+   ↓
+Better defender
+```
+
+它通过 self-play 训练，并把 GPT-Red 产生的攻击用于训练 GPT-5.6，提高后者对 prompt injection 的鲁棒性。([OpenAI][29])
+
+OpenAI 报告：
+
+> GPT-Red 在一个独立 indirect prompt-injection arena 中达到 84% attack success，而人类 red-teamers 为 13%。
+
+同时，OpenAI 表示 GPT-Red 生成的数据被用于提升 GPT-5.6 的 robustness。([OpenAI][29])
+
+这不是“模型修改自己的 weights”，但它已经形成：
+
+[
+Model_t
+\rightarrow
+Generate\ Adversarial\ Data
+\rightarrow
+Train
+\rightarrow
+Model_{t+1}
+]
+
+这是一个非常清晰的 **model-to-successor improvement loop**。
+
+---
+
+# 23. Google DeepMind — AlphaEvolve
+
+AlphaEvolve 是目前最值得关注的 industrial RSI-like system 之一。
+
+其结构：
+
+```text
+Gemini
+  ↓
+Generate Programs
+  ↓
+Automated Evaluator
+  ↓
+Score
+  ↓
+Evolutionary Database
+  ↓
+Select promising programs
+  ↓
+Generate next programs
+```
+
+([Google DeepMind][5])
+
+它已经被用于：
+
+* data-center optimization；
+* chip design；
+* AI training optimization；
+* matrix multiplication；
+* mathematical problem solving。
+
+Google DeepMind 官方特别指出，AlphaEvolve 的优化包括用于训练 Gemini 模型本身的 processes。([Google DeepMind][5])
+
+因此：
+
+> AlphaEvolve 已经出现了 **AI improving infrastructure used to build AI**。
+
+这是 RSI 的重要 precursor。
+
+但严格来说：
+
+> AlphaEvolve 仍主要针对明确的 algorithmic optimization problem，而不是 unrestricted self-improvement。
+
+---
+
+# 24. Sakana AI — AI Scientist + DGM + RSI Lab
+
+Sakana 是目前公开材料里**最明确把多个 RSI 组件组合起来的公司之一**。
+
+其 Recursive Self-Improvement Lab 页面明确把：
+
+* AI Scientist；
+* Darwin Gödel Machine；
+* Digital Red Queen；
+
+都放入 RSI research trajectory。([Sakana AI][7])
+
+AI Scientist 已经证明：
+
+```text
+Research Question
+ ↓
+Hypothesis
+ ↓
+Experiment
+ ↓
+Analysis
+ ↓
+Paper
+ ↓
+Review
+```
+
+可以大规模自动化。([Sakana AI][25])
+
+DGM 则进一步让：
+
+```text
+Research Agent
+      ↓
+Modify itself
+      ↓
+Better Research Agent
+```
+
+因此 Sakana 的路线非常接近：
+
+> **AI Scientist → Self-Improving Scientist → AI Research on AI Research**
+
+---
+
+# 25. Recursive — Automated AI Research
+
+Recursive 的 2026 年 6 月公开结果非常值得放进你的报告。
+
+它描述了一个自动 AI research system：
+
+```text
+Idea
+ ↓
+Implementation
+ ↓
+Experiment
+ ↓
+Validation
+ ↓
+Learning
+ ↓
+Next Experiment
+```
+
+系统可以运行多个 research threads，保留历史 context，合并 promising branches，并针对 reward hacking 与 variance 进行验证。([Recursive][8])
+
+Recursive 报告该系统在三个 benchmark 上获得 state-of-the-art results：
+
+* fixed-budget language model training；
+* small-model training speed；
+* GPU kernel optimization。([Recursive][8])
+
+这里有一个非常重要的概念：
+
+> **Research itself becomes an Agent loop.**
+
+这比普通 coding agent 更接近 RSI。
+
+---
+
+# 26. Weco AI — AIDE²
+
+Weco 的 AIDE² 是截至 2026-08 最直接的一项公开 RSI 宣称。
+
+其核心实验：
+
+> **autoresearch on autoresearch**
+
+即：
+
+```text
+Autoresearch
+     ↓
+AIDE
+     ↓
+AIDE improves autoresearch
+     ↓
+Better research harness
+     ↓
+Next generation AIDE
+```
+
+Weco 称 AIDE² 在 8 天内发现了一个比其人工构建两年版本更好的 autoresearch harness，并将其定义为 RSI ladder 的 Level 1。([Weco AI][9])
+
+这里必须严格区分：
+
+### What is established
+
+Weco 确实公开声称：
+
+> AIDE² successfully improved its own research harness.
+
+### What is not yet established
+
+截至该公开文章：
+
+> 完整 technical report 和 AIDE² 代码仍在后续发布阶段。
+
+因此：
+
+**Evidence grade：B / company-reported experimental evidence**
+
+而不是：
+
+**A / independently replicated scientific evidence**
+
+这是报告中必须保留的 caveat。
+
+---
+
+# 27. Inherent — Recursive Organization
+
+Inherent 是一个非常有意思的新方向。
+
+它的核心观点不是：
+
+> “一个 Agent 改进自己。”
+
+而是：
+
+> **整个 research organization 进行 recursive self-improvement。**
+
+Inherent 官方 manifesto 明确表示，它希望通过 AI 同时优化：
+
+* research discussions；
+* resource allocation；
+* infrastructure；
+* training data；
+* learning algorithms；
+* GPU kernels；
+* human-machine collaboration。
+
+([inherent][10])
+
+因此：
+
+[
+Agent\ RSI
+]
+
+正在向：
+
+[
+Organization\ RSI
+]
+
+扩展。
+
+这其实与你笔记里的：
+
+> deployment system is as important as raw model intelligence
+
+高度一致。
+
+---
+
+# 28. Ricursive Intelligence — AI ↔ Hardware
+
+这里必须注意：
+
+**Recursive ≠ Ricursive Intelligence。**
+
+Ricursive Intelligence 是另一家公司。
+
+其公开定位是：
+
+> AI ↔ hardware recursive self-improvement loop
+
+核心方向从 chip design 开始，并试图让 AI 与制造 AI 所需的 hardware 相互优化。([Ricursive][11])
+
+即：
+
+```text
+Better AI
+ ↓
+Better Chip Design
+ ↓
+Better Hardware
+ ↓
+More Compute
+ ↓
+Better AI
+```
+
+这是非常有意思的一种 RSI：
+
+> **不是 software-only RSI，而是 hardware-software co-evolution。**
+
+如果成立，其理论上的 improvement ceiling 会高于单纯 prompt/harness optimization，因为它能够同时优化：
+
+[
+Algorithm + Model + Hardware
+]
+
+---
+
+# 29. Ineffable Intelligence — A Different Bet
+
+Ineffable Intelligence 的路线与 LLM-centric RSI 有明显区别。
+
+David Silver 的核心 thesis 是：
+
+> AI 应该通过 experience 而不是主要依赖 human-generated data 来持续学习。
+
+Ineffable 官方将其目标定义为：
+
+> **superlearner**
+
+它希望系统能够持续从 experience 中发现知识，并不断学习和改进。([Ineffable][12])
+
+因此其 loop 更接近：
+
+```text
+Environment
+ ↓
+Experience
+ ↓
+RL
+ ↓
+New Knowledge
+ ↓
+Better Policy
+ ↓
+More capable exploration
+ ↓
+More experience
+```
+
+这条路线实际上对应你 notes 中：
+
+> model self-play, synthetic data, test-time training and continual learning
+
+但它更 radical：
+
+> **把 human data 本身从 intelligence substrate 中逐渐移除。**
+
+因此，Ineffable 更像是：
+
+> **Experience-driven RSI**
+
+而 Anthropic / OpenAI / Sakana 更接近：
+
+> **LLM-Agent-driven RSI**
+
+两者最终可能汇合。
+
+---
+
+# 30. The Big Convergence
+
+截至 2026 年，我认为 RSI 领域正在形成五条主路线：
+
+```text
+                    Recursive Self-Improvement
+                              │
+       ┌──────────────┬───────┼────────┬──────────────┐
+       │              │       │        │              │
+   Model Loop     Agent Loop  Research  Evolution   Experience
+       │              │       │        │              │
+  Self-training   Harness    AI Sci.   DGM        RL / Self-play
+  Self-reward     Memory     AutoRes.   AlphaEvolve World Models
+  Test-time RL    Skills     AutoResearch DGM-H     Continual RL
+       │              │       │        │              │
+       └──────────────┴───────┴────────┴──────────────┘
+                              │
+                       Meta-Improvement
+                              │
+                    Improve the Improver
+```
+
+---
+
+# 31. Why Coding Agents Are So Important
+
+这是你 notes 中我认为最值得强调的观点之一。
+
+为什么 RSI 研究中 coding agent 如此重要？
+
+因为 software engineering 同时拥有：
+
+### 1. 可执行性
+
+```text
+Code → Execute
+```
+
+### 2. 可验证性
+
+```text
+Test → Pass / Fail
+```
+
+### 3. 可修改性
+
+```text
+Agent → Edit Code
+```
+
+### 4. 可组合性
+
+```text
+Code
+Tools
+Workflow
+Memory
+Harness
+```
+
+### 5. 可持久化
+
+```text
+Git
+Files
+Artifacts
+Logs
+Benchmarks
+```
+
+### 6. 可递归
+
+最关键：
+
+> **Agent 可以修改运行 Agent 的代码。**
+
+所以 coding agent 天然提供：
+
+[
+Action
++
+Environment
++
+Feedback
++
+Memory
++
+Persistent\ State
++
+Self\ Modification
+]
+
+这几乎就是 RSI 的最小实验场。
+
+---
+
+# 32. Why Software Is the First RSI Substrate
+
+可以把现实世界任务分成：
+
+```text
+Abstract task
+    ↓
+Need judgment
+    ↓
+Hard to evaluate
+```
+
+与：
+
+```text
+Software task
+    ↓
+Code
+    ↓
+Compile
+    ↓
+Test
+    ↓
+Benchmark
+```
+
+后者有天然 evaluator。
+
+所以：
+
+> **Coding Agent is not merely one application of Agentic AI. It is an experimental substrate for recursive self-improvement.**
+
+这也是为什么 SWE-bench、Terminal-Bench、MLE-bench、AI research benchmark 等正在变成 RSI infrastructure。
+
+---
+
+# 33. The Evaluator Is More Important Than the Generator
+
+RSI 真正的 bottleneck 很可能不是：
+
+> Can AI generate better ideas?
+
+而是：
+
+> **Can AI reliably know whether the idea is better?**
+
+这是所有 RSI 系统共同的问题。
+
+可以写成：
+
+[
+Generate
+\rightarrow
+Evaluate
+\rightarrow
+Select
+\rightarrow
+Improve
+]
+
+如果：
+
+[
+Evaluator \approx Generator
+]
+
+那么系统很容易：
+
+```text
+Generate bad idea
+ ↓
+Self-evaluate
+ ↓
+"I think it's good"
+ ↓
+Train on bad idea
+ ↓
+Generate worse idea
+```
+
+这就是：
+
+> self-confirming loop
+
+最新 RSI survey 也把 evaluator 设计放在核心位置，并提出从 formal verifier、programmatic verifier、external judge 到 intrinsic self-assessment 的 verification hierarchy。([arXiv][14])
+
+---
+
+# 34. RSI Failure Modes
+
+## 34.1 Model Collapse
+
+如果：
+
+[
+Model_t
+\rightarrow
+Synthetic Data
+\rightarrow
+Training
+\rightarrow
+Model_{t+1}
+]
+
+不断使用自身生成的数据，而缺少新的 external information，就可能出现 distribution collapse。
+
+2026 年关于 code LLM recursive self-training 的研究报告了一个尤其值得警惕的结果：AI 自己作为 reviewer 时可能逐渐进入“rubber-stamp”状态，即接受率上升但 benchmark correctness 下降。([arXiv][30])
+
+因此：
+
+> **Self-evaluation ≠ reliable evaluation.**
+
+---
+
+# 35. Reward Hacking
+
+如果 evaluator 可以被 Agent 操纵：
+
+```text
+Agent
+ ↓
+Optimize benchmark
+ ↓
+Find loophole
+ ↓
+Score ↑
+Capability ↔
+```
+
+那么：
+
+[
+Score \uparrow
+]
+
+并不意味着：
+
+[
+Intelligence \uparrow
+]
+
+AlphaEvolve、Recursive、Weco 等系统都强调 automated validation、variance checking 或 reward-hack detection，这并不是偶然，而是 RSI 的核心工程问题。([Google DeepMind][5])
+
+---
+
+# 36. Benchmark Overfitting
+
+如果：
+
+```text
+Agent improves benchmark
+```
+
+不能证明：
+
+```text
+Agent improves general intelligence
+```
+
+因此严格 RSI benchmark 应该同时测试：
+
+[
+In\ Distribution
+]
+
+和：
+
+[
+Out\ of\ Distribution
+]
+
+以及：
+
+[
+Cross\ Model
+]
+
+[
+Cross\ Task
+]
+
+[
+Cross\ Environment
+]
+
+甚至：
+
+[
+Cross\ Evaluator
+]
+
+否则 Agent 可能只是学会：
+
+> **如何赢这个 benchmark。**
+
+---
+
+# 37. Fixed Compute: Your Important Point
+
+你 notes 中：
+
+> 算力固定 / 效率提升
+
+这是一个非常重要的 RSI measurement principle。
+
+如果每一轮给系统更多 compute：
+
+```text
+Model A + 10 GPU
+Model B + 100 GPU
+```
+
+B 变强不能直接证明 RSI。
+
+因此 RSI 至少应该报告：
+
+### Fixed Compute
+
+[
+Capability / FLOPs
+]
+
+### Fixed Time
+
+[
+Capability / WallClock
+]
+
+### Fixed Cost
+
+[
+Capability / Dollar
+]
+
+### Fixed Human Labor
+
+[
+Capability / HumanHour
+]
+
+### Fixed Hardware
+
+[
+Capability / GPU
+]
+
+### Fixed Data
+
+[
+Capability / ExternalData
+]
+
+这几个指标可以帮助区分：
+
+> **Scaling**
+
+与：
+
+> **Self-improvement**
+
+---
+
+# 38. The Most Important RSI Metric: Meta-Productivity
+
+我建议增加一个你 notes 中还没有完全形式化的指标：
+
+[
+MetaProductivity
+================
+
+\frac{\Delta Capability}
+{\Delta ImprovementCost}
+]
+
+但真正重要的是：
+
+[
+\frac{ImprovementRate_{t+1}}
+{ImprovementRate_t}
+]
+
+如果：
+
+[
+
+> 1
+> ]
+
+说明 improvement process 正在加速。
+
+如果：
+
+[
+=1
+]
+
+说明只是线性迭代。
+
+如果：
+
+[
+<1
+]
+
+说明进入 diminishing returns。
+
+因此真正值得关注的不是：
+
+> “Agent 提升了多少？”
+
+而是：
+
+> **“Agent 改进自己的速度是否也在提升？”**
+
+这才是 intelligence explosion 的工程指标。
+
+---
+
+# 39. RSI as an Agentic Loop
+
+可以把整个问题压缩成：
+
+```text
+               ┌───────────────────┐
+               │                   │
+               ▼                   │
+          Observe Environment      │
+               │                   │
+               ▼                   │
+             Plan                  │
+               │                   │
+               ▼                   │
+             Act                   │
+               │                   │
+               ▼                   │
+          Get Feedback             │
+               │                   │
+               ▼                   │
+            Evaluate               │
+               │                   │
+               ▼                   │
+          Learn / Memory           │
+               │                   │
+               ▼                   │
+       Modify Strategy/Harness     │
+               │                   │
+               └───────────────────┘
+```
+
+然后再增加第二层：
+
+```text
+Agent Loop
+     ↓
+Evaluate Agent Loop
+     ↓
+Modify Agent Loop
+     ↓
+Better Agent Loop
+```
+
+再增加第三层：
+
+```text
+Improve
+   ↓
+Improve the Improver
+   ↓
+Improve the mechanism
+that improves the improver
+```
+
+这才开始真正进入 recursive territory。
+
+---
+
+# 40. Fixed Workflow vs Open-Ended Workflow
+
+你提出的：
+
+> “有固定 workflow 和无固定 workflow”
+
+是非常关键的区分。
+
+### Fixed Workflow
+
+```text
+Research
+ → Generate
+ → Execute
+ → Evaluate
+ → Repeat
+```
+
+优点：
+
+* 稳定；
+* 容易 benchmark；
+* 容易 debug；
+* 容易安全控制。
+
+缺点：
+
+> improvement space 被人类提前定义。
+
+---
+
+### Open-ended Workflow
+
+Agent 可以自己决定：
+
+```text
+What to improve?
+How to improve?
+Which tool?
+Which experiment?
+Which evaluator?
+Which workflow?
+```
+
+这才有真正的 open-endedness。
+
+但同时：
+
+> **越 open-ended，越难验证。**
+
+因此未来 RSI 的核心矛盾很可能是：
+
+[
+OpenEndedness
+\leftrightarrow
+Verifiability
+]
+
+---
+
+# 41. Harness Engineering → Meta-Methodology
+
+你的这个判断，我认为可以升级成报告中的核心 thesis：
+
+> **Harness engineering will evolve into meta-methodology.**
+
+第一阶段：
+
+```text
+Human
+ ↓
+Design Prompt
+```
+
+第二阶段：
+
+```text
+Human
+ ↓
+Design Workflow
+```
+
+第三阶段：
+
+```text
+Human
+ ↓
+Design Harness
+```
+
+第四阶段：
+
+```text
+Agent
+ ↓
+Optimize Harness
+```
+
+第五阶段：
+
+```text
+Agent
+ ↓
+Optimize Harness Optimization
+```
+
+第六阶段：
+
+```text
+Agent
+ ↓
+Discover better ways of doing AI research
+```
+
+因此最终：
+
+> **The unit of optimization moves upward.**
+
+从：
+
+```text
+Answer
+```
+
+到：
+
+```text
+Agent
+```
+
+再到：
+
+```text
+Agent Generator
+```
+
+再到：
+
+```text
+AI Research Process
+```
+
+---
+
+# 42. A Possible RSI Roadmap
+
+综合经典论文、2025–2026 research 和 frontier labs，我会把未来路线概括成：
+
+```text
+                 RSI ROADMAP
+
+2022
+ │
+ ├── STaR
+ │
+2023
+ │
+ ├── Self-Refine
+ ├── Reflexion
+ ├── Voyager
+ └── Eureka
+ │
+2024
+ │
+ ├── AI Scientist
+ └── SWE Agents
+ │
+2025
+ │
+ ├── AI Scientist-v2
+ ├── AlphaEvolve
+ ├── Darwin Gödel Machine
+ ├── Absolute Zero
+ └── Agentic Context Engineering
+ │
+2026
+ │
+ ├── AutoResearch
+ ├── Harness Evolution
+ ├── Meta Context Engineering
+ ├── MetaSkill Evolution
+ ├── Hyperagents
+ ├── AIDE²
+ ├── AI Scientist / autonomous research
+ └── Frontier-lab internal AI R&D
+ │
+ ▼
+Future
+ │
+ ├── Self-improving Agent
+ ├── Self-improving Harness
+ ├── Self-improving Researcher
+ ├── Self-improving Research Process
+ ├── AI-designed successor models
+ └── Open-ended RSI
+```
+
+---
+
+# 43. Frontier Landscape
+
+| Organization           | Public RSI Evidence      | Main Direction                                   | Evidence |
+| ---------------------- | ------------------------ | ------------------------------------------------ | -------- |
+| Anthropic              | **Explicit**             | AI develops AI / coding agents                   | A        |
+| OpenAI                 | **Explicit but bounded** | Self-improving agents / self-play safety         | A        |
+| Google DeepMind        | **Strong indirect**      | AlphaEvolve / AI Scientist / algorithm evolution | A        |
+| Sakana AI              | **Explicit**             | AI Scientist / DGM / evolutionary AI             | A        |
+| Recursive              | **Explicit**             | Automated AI research                            | B+       |
+| Weco AI                | **Explicit**             | AIDE² / autoresearch-on-autoresearch             | B        |
+| Inherent               | **Explicit thesis**      | Recursive research organization                  | B        |
+| Ricursive Intelligence | **Explicit thesis**      | AI ↔ hardware co-evolution                       | B        |
+| Ineffable Intelligence | **Explicit thesis**      | Experience-driven continual RL                   | B        |
+| Academic RSI field     | **Rapidly expanding**    | Self-training / harness / meta-learning          | A/B      |
+
+这里的 **A/B 不是公司排名，而是证据质量**：
+
+* **A**：官方公开 + 可复现论文/实验；
+* **B+**：官方公开实验，但独立验证有限；
+* **B**：公司公开 thesis / early result；
+* **C**：只有宣传性 claim，缺乏技术证据。
+
+---
+
+# 44. What Counts as Real RSI?
+
+我建议未来所有论文都回答下面 10 个问题：
+
+### 1. What changed?
+
+Model？
+
+Harness？
+
+Memory？
+
+Workflow？
+
+Training pipeline？
+
+Research process？
+
+---
+
+### 2. Who made the change?
+
+Human？
+
+LLM？
+
+Agent？
+
+Evolutionary search？
+
+Another Agent？
+
+---
+
+### 3. Who evaluated the change?
+
+Human？
+
+External evaluator？
+
+Programmatic test？
+
+Same model？
+
+Independent model？
+
+---
+
+### 4. Does the improvement persist?
+
+一次 inference gain 不算。
+
+---
+
+### 5. Does it generalize?
+
+IID？
+
+OOD？
+
+New benchmark？
+
+New model？
+
+---
+
+### 6. Is compute controlled?
+
+必须报告。
+
+---
+
+### 7. Is human labor controlled?
+
+否则可能只是：
+
+> “AI generated 90% of the code, human spent 10 hours debugging.”
+
+---
+
+### 8. Does the system improve its improvement mechanism?
+
+这是 RSI 的核心。
+
+---
+
+### 9. Does improvement accelerate?
+
+[
+\frac{d^2 Capability}{dt^2}>0
+]
+
+是否成立？
+
+---
+
+### 10. Can it produce a better successor?
+
+这是 strict RSI 最重要的终极测试。
+
+---
+
+# 45. A More Precise Definition
+
+综合上述，我建议你在自己的分享 / 报告中采用这个定义：
+
+> **Recursive Self-Improvement is a closed or progressively closing feedback process in which an AI system uses its own capabilities, experience, artifacts, evaluations, or research outputs to modify the system that produces those capabilities, such that subsequent generations become not only more capable at target tasks but also more capable at producing further improvements.**
+
+中文：
+
+> **递归自我改进，是一种正在闭合或逐步闭合的反馈过程：AI 利用自身能力、经验、产物、评价或研究结果，修改产生这些能力的系统，使后续系统不仅在目标任务上能力更强，而且具备更强的进一步改进自身的能力。**
+
+这个定义比：
+
+> “AI improves itself”
+
+严格得多。
+
+---
+
+# 46. The Central Thesis
+
+如果要把整个报告压缩成一句话，我会用：
+
+> **RSI is not fundamentally about a model rewriting its own weights; it is about closing the loop between intelligence and the machinery that produces intelligence.**
+
+中文：
+
+> **RSI 的本质不是模型是否修改自己的 weights，而是“智能”是否开始反过来优化产生智能的机器。**
+
+因此：
+
+```text
+Model
+   ↓
+Agent
+   ↓
+Harness
+   ↓
+Workflow
+   ↓
+Training
+   ↓
+Research
+   ↓
+AI Research
+   ↓
+AI Research on AI Research
+   ↓
+Successor Model
+```
+
+这比单纯讨论：
+
+> “AI 会不会自己改参数”
+
+更加准确。
+
+---
+
+# 47. My Assessment as of August 2026
+
+我的判断可以分成三个层次。
+
+### 已经发生
+
+**AI-assisted AI development**
+
+这一点已经有大量公开证据。
+
+AI 正在：
+
+* 写 AI 软件；
+* 运行实验；
+* 生成 synthetic data；
+* 做 evaluation；
+* 设计 algorithm；
+* 优化 GPU kernels；
+* 进行 scientific research；
+* 生成下一代训练所需要的数据。
+
+Anthropic、OpenAI、Google DeepMind、Sakana 等都有公开证据。([Anthropic][4])
+
+---
+
+### 正在发生
+
+**Bounded recursive self-improvement**
+
+例如：
+
+```text
+Agent
+ ↓
+Improve skill
+ ↓
+Improve harness
+ ↓
+Improve workflow
+ ↓
+Better Agent
+```
+
+DGM、Agentic Harness Engineering、MetaSkill-Evolve、Hyperagents、AIDE² 都属于这一层。([arXiv][3])
+
+---
+
+### 尚未被公开充分证明
+
+**Open-ended autonomous RSI**
+
+即：
+
+```text
+AI
+ ↓
+design better AI
+ ↓
+train better AI
+ ↓
+evaluate better AI
+ ↓
+deploy better AI
+ ↓
+better AI improves this process
+ ↓
+repeat indefinitely
+```
+
+尤其是：
+
+> **无需人工选择研究方向、无需人工修改 reward/evaluator、无需人工设计 successor architecture，并且 improvement rate 持续加速。**
+
+截至 2026-08-11，公开证据还不足以证明这个最强版本已经实现。
+
+Anthropic 自己也明确写道：
+
+> “We are not there yet.” ([Anthropic][4])
+
+---
+
+# 48. Final View
+
+因此，我认为今天最准确的描述不是：
+
+> **“RSI has arrived.”**
+
+也不是：
+
+> **“RSI is science fiction.”**
+
+而是：
+
+> **We are moving from AI that performs tasks to AI that improves the machinery for performing tasks, and from there toward AI that improves the machinery for improving AI itself.**
+
+真正值得关注的不是某一个“RSI paper”。
+
+而是一个明显正在形成的技术栈：
+
+```text
+                    ┌────────────────────────┐
+                    │   Open-ended RSI        │
+                    └────────────┬───────────┘
+                                 │
+                         AI Research
+                                 │
+                      ┌──────────┴──────────┐
+                      │                     │
+                Model Improvement     Agent Improvement
+                      │                     │
+                Self-training          Harness
+                Self-play              Memory
+                Test-time RL           Skills
+                      │                     │
+                      └──────────┬──────────┘
+                                 │
+                          Evaluation
+                                 │
+                          Environment
+                                 │
+                              Tools
+                                 │
+                              Model
+```
+
+**Evaluation 是闭环的控制器；Agent 是执行器；Harness 是可变的 cognitive machinery；Memory 是持久状态；Coding 是最容易验证的实验环境；AutoResearch 是从 Agent RSI 走向 AI RSI 的桥梁。**
+
+而真正的临界点，不是“AI 能不能自己写代码”。
+
+这个能力已经出现。
+
+真正的临界点是：
+
+> **AI 能否自主发现比人类当前使用的方法更好的 AI-improvement method，并且下一代 AI 能够进一步提高发现这种方法的能力。**
+
+也就是从：
+
+[
+AI \rightarrow Better\ Answers
+]
+
+走到：
+
+[
+AI \rightarrow Better\ Agents
+]
+
+再到：
+
+[
+AI \rightarrow Better\ AI\ Researchers
+]
+
+最终：
+
+[
+AI \rightarrow Better\ AI\ Improvement\ Process
+]
+
+**这最后一步，才是 Recursive Self-Improvement 真正值得我们严肃关注的地方。**
+
+---
+
+## Key papers / primary sources
+
+| 年份   | 工作                                                                    | 为什么重要                                                              |
+| ---- | --------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| 1965 | **Good — Speculations Concerning the First Ultraintelligent Machine** | Intelligence explosion 的思想源头 ([科学直通车][1])                          |
+| 2003 | **Schmidhuber — Gödel Machines**                                      | 严格 self-referential self-improvement 理论 ([IDSIA][18])              |
+| 2022 | **STaR**                                                              | Self-generated reasoning → training ([arXiv][19])                  |
+| 2023 | **Self-Refine**                                                       | inference-time iterative self-improvement ([arXiv][2])             |
+| 2023 | **Reflexion**                                                         | Agent + feedback + persistent reflection memory ([arXiv][20])      |
+| 2023 | **Voyager**                                                           | lifelong skill accumulation ([arXiv][21])                          |
+| 2023 | **Eureka**                                                            | LLM 自动设计 reward + evolutionary optimization ([arXiv][22])          |
+| 2024 | **The AI Scientist**                                                  | 自动化完整 scientific research loop ([arXiv][23])                       |
+| 2025 | **AI Scientist-v2**                                                   | Agentic tree search + AI-generated paper peer review ([arXiv][24]) |
+| 2025 | **AlphaEvolve**                                                       | LLM + evolutionary algorithm + evaluator ([Google DeepMind][5])    |
+| 2025 | **Darwin Gödel Machine**                                              | Agent 修改自身代码并进行 evolutionary self-improvement ([arXiv][3])         |
+| 2025 | **Agentic Context Engineering**                                       | Context 成为可进化的 system state ([Hugging Face][17])                   |
+| 2026 | **MetaSkill-Evolve**                                                  | improvement mechanism 本身进入递归闭环 ([arXiv][26])                       |
+| 2026 | **Agentic Harness Engineering**                                       | Harness 自动进化 ([数字对象标识符][16])                                       |
+| 2026 | **Hyperagents**                                                       | meta-agent 自身也成为 self-improvement 对象 ([arXiv][27])                 |
+| 2026 | **Continual Harness**                                                 | online、reset-free self-improving harness ([Hugging Face][31])      |
+| 2026 | **RSI Survey**                                                        | 1,250 papers 的 RSI taxonomy 与 evaluator hierarchy ([arXiv][14])    |
+
+### Frontier primary evidence
+
+* [Anthropic — When AI builds itself](https://www.anthropic.com/institute/recursive-self-improvement?_sm_nck=1&utm_source=chatgpt.com)
+* [OpenAI — Building self-improving tax agents with Codex](https://openai.com/index/building-self-improving-tax-agents-with-codex/?utm_source=chatgpt.com)
+* [OpenAI — GPT-Red: Unlocking Self-Improvement for Robustness](https://openai.com/index/unlocking-self-improvement-gpt-red/?utm_source=chatgpt.com)
+* [Google DeepMind — AlphaEvolve](https://deepmind.google/blog/alphaevolve-a-gemini-powered-coding-agent-for-designing-advanced-algorithms/?utm_source=chatgpt.com)
+* [Sakana AI — Recursive Self-Improvement Lab](https://sakana.ai/rsi-lab/?utm_source=chatgpt.com)
+* [Recursive — First Steps Toward Automated AI Research](https://www.recursive.com/articles/first-steps-toward-automated-ai-research?utm_source=chatgpt.com)
+* [Weco AI — AIDE²](https://www.weco.ai/blog/first-evidence-of-recursive-self-improvement?utm_source=chatgpt.com)
+* [Inherent — Living within the Experiment](https://inherentlabs.ai/?utm_source=chatgpt.com)
+* [Ricursive Intelligence](https://www.ricursive.com/?utm_source=chatgpt.com)
+* [Ineffable Intelligence](https://www.ineffable.ai/?utm_source=chatgpt.com)
+
+[1]: https://www.sciencedirect.com/science/article/pii/S0065245808604180?utm_source=chatgpt.com "Speculations Concerning the First Ultraintelligent Machine - ScienceDirect"
+[2]: https://arxiv.org/abs/2303.17651?utm_source=chatgpt.com "Self-Refine: Iterative Refinement with Self-Feedback"
+[3]: https://arxiv.org/abs/2505.22954?utm_source=chatgpt.com "Darwin Godel Machine: Open-Ended Evolution of Self-Improving Agents"
+[4]: https://www.anthropic.com/institute/recursive-self-improvement?_sm_nck=1&utm_source=chatgpt.com "When AI builds itself \ Anthropic"
+[5]: https://deepmind.google/blog/alphaevolve-a-gemini-powered-coding-agent-for-designing-advanced-algorithms/?utm_source=chatgpt.com "AlphaEvolve: A Gemini-powered coding agent for designing advanced algorithms — Google DeepMind"
+[6]: https://openai.com/index/building-self-improving-tax-agents-with-codex/?utm_source=chatgpt.com "Building self-improving tax agents with Codex | OpenAI"
+[7]: https://sakana.ai/rsi-lab/?utm_source=chatgpt.com "Introducing Sakana AI’s Recursive Self-Improvement (RSI) Lab"
+[8]: https://www.recursive.com/articles/first-steps-toward-automated-ai-research?utm_source=chatgpt.com "First Steps Toward Automated AI Research - Recursive"
+[9]: https://www.weco.ai/blog/first-evidence-of-recursive-self-improvement?utm_source=chatgpt.com "AIDE²: First Evidence of Recursive Self-Improvement | Weco AI"
+[10]: https://inherentlabs.ai/?utm_source=chatgpt.com "inherent"
+[11]: https://www.ricursive.com/?utm_source=chatgpt.com "Recursive Self-Improvement via AI for Chip Design & Chip Design for AI - Ricursive Intelligence"
+[12]: https://www.ineffable.ai/?utm_source=chatgpt.com "Ineffable Intelligence"
+[13]: https://www.organism.earth/library/document/speculations-concerning-the-first-ultraintelligent-machine?utm_source=chatgpt.com "Speculations Concerning the First Ultraintelligent Machine - Irving John Good"
+[14]: https://arxiv.org/abs/2607.07663?utm_source=chatgpt.com "Recursive Self-Improvement in AI: From Bounded Self-Refinement to Autonomous Research Loops"
+[15]: https://arxiv.org/abs/2405.15793?utm_source=chatgpt.com "SWE-agent: Agent-Computer Interfaces Enable Automated Software Engineering"
+[16]: https://doi.org/10.48550/arXiv.2604.25850?utm_source=chatgpt.com "[2604.25850] Agentic Harness Engineering: Observability-Driven Automatic Evolution of Coding-Agent Harnesses"
+[17]: https://huggingface.co/papers/2510.04618?utm_source=chatgpt.com "Paper page - Agentic Context Engineering: Evolving Contexts for Self-Improving Language Models"
+[18]: https://people.idsia.ch/~juergen/gmweb3/gmweb3.html?utm_source=chatgpt.com "Gödel Machines: Self-Referential Universal Problem Solvers Making Provably Optimal Self-Improvements TR IDSIA-19-03, Version 3; arXiv:cs.LO/0309048 v3"
+[19]: https://arxiv.org/abs/2203.14465?utm_source=chatgpt.com "STaR: Bootstrapping Reasoning With Reasoning"
+[20]: https://arxiv.org/abs/2303.11366?utm_source=chatgpt.com "Reflexion: Language Agents with Verbal Reinforcement Learning"
+[21]: https://arxiv.org/abs/2305.16291?utm_source=chatgpt.com "Voyager: An Open-Ended Embodied Agent with Large Language Models"
+[22]: https://arxiv.org/abs/2310.12931?utm_source=chatgpt.com "Eureka: Human-Level Reward Design via Coding Large Language Models"
+[23]: https://arxiv.org/abs/2408.06292?utm_source=chatgpt.com "The AI Scientist: Towards Fully Automated Open-Ended Scientific Discovery"
+[24]: https://arxiv.org/abs/2504.08066?utm_source=chatgpt.com "The AI Scientist-v2: Workshop-Level Automated Scientific Discovery via Agentic Tree Search"
+[25]: https://sakana.ai/ai-scientist-nature/?utm_source=chatgpt.com "The AI Scientist: Towards Fully Automated AI Research, Now Published in <i>Nature</i>"
+[26]: https://arxiv.org/abs/2607.05297?utm_source=chatgpt.com "MetaSkill-Evolve: Recursive Self-Improvement of LLM Agents via Two-Timescale Meta-Skill Evolution"
+[27]: https://arxiv.org/abs/2603.19461?utm_source=chatgpt.com "Hyperagents"
+[28]: https://huggingface.co/papers/2601.21557?utm_source=chatgpt.com "Paper page - Meta Context Engineering via Agentic Skill Evolution"
+[29]: https://openai.com/index/unlocking-self-improvement-gpt-red/?utm_source=chatgpt.com "GPT-Red: Unlocking Self-Improvement for Robustness | OpenAI"
+[30]: https://arxiv.org/abs/2606.28438?utm_source=chatgpt.com "When AI Reviews Its Own Code: Recursive Self-Training Collapse in Code LLMs"
+[31]: https://huggingface.co/papers/2605.09998?utm_source=chatgpt.com "Paper page - Continual Harness: Online Adaptation for Self-Improving Foundation Agents"
