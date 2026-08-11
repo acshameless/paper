@@ -31,8 +31,8 @@
 
 
 ---
-- [] https://lilianweng.github.io/posts/2026-07-04-harness/
-- [] https://openai.com/index/unrolling-the-codex-agent-loop/
-- [] https://arxiv.org/abs/2510.04618
-- [] https://arxiv.org/abs/2601.21557
-- [] 
+- [ ] https://lilianweng.github.io/posts/2026-07-04-harness/
+- [ ] https://openai.com/index/unrolling-the-codex-agent-loop/
+- [ ] https://arxiv.org/abs/2510.04618
+- [ ] https://arxiv.org/abs/2601.21557
+- [ ] 
