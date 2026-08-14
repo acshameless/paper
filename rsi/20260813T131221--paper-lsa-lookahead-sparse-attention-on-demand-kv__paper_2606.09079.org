@@ -1,0 +1,76 @@
+#+title:      长上下文显存墙不在容量，在全量加载策略
+#+subtitle:   FlashMemory-DeepSeek-V4: Lightning Index Ultra-Long Context via Lookahead Sparse Attention
+#+source:     https://arxiv.org/abs/2606.09079
+#+authors:    Yan Wang, Qifan Zhang, Jiachen Yu, Tian Liang, Dongyang Ma, Xiang Hu, Zibo Lin, Chunyang Li, Zhichao Wang, Miao Peng, Nuo Chen, Jia Li, Yujiu Yang, Haitao Mi, Dong Yu
+
+* 速读
+
+长上下文模型在每一步解码时都把完整 KV cache 塞在 GPU 里，但作者发现超过 64K token 的请求中九成只靠最后 8K 就能答——其余历史全是白占显存的死重。
+他们给 DeepSeek-V4 加了一个轻量检索器，每 64 步预测接下来需要哪些历史 KV chunk，只把这些从 CPU 搬进 GPU。
+检索器独立训练、1 小时收敛、不碰千亿参数主干，却把 KV cache 压到原来的 13.5%，准确率还略升——因为过滤掉无关 chunk 等于给注意力去噪。
+但这个范式只在「稀疏记忆」任务上成立；需要密集全局记忆的任务上准确率从 76% 暴跌到 48%。
+
+* 它到底在解决什么
+
+一个 1M token 的请求，光 KV cache 就要吃掉 3.73 GB GPU 显存。而且这个开销随上下文长度线性增长——不管当前 token 的预测是否需要历史，全部历史都赖在 GPU 里。
+这不只是浪费。作者分析了真实推理日志：超过 64K token 的请求中，九成只用最后 8K token 就能准确回答。也就是说，绝大多数解码步里，GPU 显存中九成以上的 KV cache 对当前 token 预测毫无贡献。
+那直接丢掉历史呢？滑动窗口注意力（只保留最近 token）在那些真正需要全局综合的任务上彻底崩溃——LongMemEval 上从 80 分掉到 19 分。
+面临一个硬矛盾：要么为局部生成步骤付全量历史显存税，要么丢掉全局推理能力。长上下文推理的成本困局，根源就在这里。
+
+* 它真正看见了什么
+
+解码时的显存瓶颈不是「容量不够」，而是「加载策略太粗」——默认全量加载，把死重和活重一视同仁。
+
+LSA（Lookahead Sparse Attention）的机制是一条两级管道：
+
+#+begin_example
+每 τ=64 步触发一次：
+
+  当前 hidden state h_t
+       │
+       ▼
+  Memory Indexer (layer 10, 12, 20)
+  ┌─ dual-encoder: h_t → query
+  │  与冻结的历史 K^Comp 做点积
+  │  Sigmoid → I_{t,s}
+  └─ I_{t,s} ≥ 0.5 ?  ── YES ──→ 从 CPU 搬进 GPU
+                        NO  ──→ 留在 CPU（不占显存）
+       │
+       ▼
+  原生 Lightning Indexer (Top-k)
+  只在搬进来的子集上做细粒度选择
+       │
+       ▼
+  Core Attention = HCA(128:1) + 滑窗8K + 召回的 CSA
+#+end_example
+
+关键设计：Memory Indexer 是一个标准 dual-encoder 检索器，训练时只优化 query 侧的投影矩阵（不到全模型 0.1% 的参数），历史 KV 的 key 是冻结的、预计算好的。
+整个训练不需要加载千亿参数的主干模型，1 块 H20 GPU 1 小时收敛。这让他们在一周内跑了 500 次实验来搜索最优层配置——如果走传统的端到端蒸馏，这不可能做到。
+
+结果是一个反直觉的「少即是多」：
+
+#+begin_example
+任务 (上下文长度)        显存占比    准确率变化
+──────────────────────────────────────────
+LongBench-v2-L (493K)    10%        +1.9%
+LongMemEval-M (500K)      9%        +0.9%
+RULER (512K)             10%        +1.3%
+──────────────────────────────────────────
+MRCR (密集全局记忆)       —         -28.0% (崩溃)
+#+end_example
+
+前三行是「稀疏记忆」任务：
+只有少数历史 chunk 对回答关键，过滤掉其余的反而去噪——准确率不降反升。在 493K 上下文上，用 10% 的显存预算打出 +1.9% 的准确率提升。
+这较稳地显示了：当任务的记忆需求是稀疏的，全量加载不仅浪费显存，还用无关 chunk 的噪声污染了注意力。
+
+但 MRCR 这一行是硬边界。MRCR（Multi-Range Context Retrieval）需要密集的全局记忆——不是少数关键 chunk，而是大量分散的历史信息。
+作者的 oracle 实验显示，即使给到 50% 的真实 golden chunk，MRCR 准确率仍然比全量上下文低 2%。这说明 LSA 的能力上限由任务的记忆密度决定：稀疏记忆任务上它是去噪器，密集记忆任务上它是信息瓶颈。
+
+另外两个边界：训练上下文长度的 2 倍以外，位置编码分布偏移导致检索退化到随机水平；在上下文无关任务上，Sigmoid 门控会泄漏微量背景概率，长序列上假阳性累积，无法实现理想的常数显存。
+
+* 我能带走什么
+
+以后看到长上下文模型的显存瓶颈，先不急着加卡或压缩模型，而先问：当前 decode step 到底需要多少历史 KV？
+如果九成请求只用最后 8K token 就能答，那瓶颈不在显存容量，在于全量加载的默认策略——换一个按需取回的加载方式，可能比加硬件更便宜。
+
+但用这个思路前，先判断任务的记忆密度：跑一个 oracle 实验，只保留 attention 权重最高的 25% chunk，看准确率是否不动。不动就是稀疏记忆任务，按需取回安全；一动就说明记忆密集，这条路走不通。

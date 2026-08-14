@@ -1,0 +1,65 @@
+#+title:      不重置环境也能自我修好脚手架
+#+subtitle:   Continual Harness: Online Adaptation for Self-Improving Foundation Agents
+#+source:     https://arxiv.org/abs/2605.09998
+#+authors:    Seth Karten, Joel Zhang, Tersoo Upaa Jr, Ruirong Feng, Wenzhe Li, Chengshuai Shi, Chi Jin, Kiran Vodrahalli
+#+venue:      arXiv 2026 (Princeton / ARISE Foundation / Google DeepMind)
+
+* 速读
+
+让 AI 玩宝可梦这类长周期游戏时，支撑模型的外壳（harness：系统提示、子代理、技能库、记忆）需要不断改进才能通关。
+已有的做法要么靠人盯直播手动改，要么靠跑完一整局再重置来优化 prompt——但 embodied agent 的单局可能跑几万步，重置代价极高。
+这篇论文发现：harness 可以在单次连续运行中就地改写。agent 边玩边积累失败记录，一个 Refiner 每隔 F 步读最近轨迹、对四个组件做增删改，不需要重置环境。
+从零开始，它在宝可梦 Red 和 Emerald 上恢复了大部分到手工专家 harness 的效率差距，而且差距随模型能力缩放——太弱的模型反而被 harness 拖累。
+
+* 它到底在解决什么
+
+Gemini Plays Pokémon（GPP）项目让 Gemini 通关了蓝、黄（困难模式）和水晶版，成为第一个通关多个宝可梦 RPG 的 AI 系统。
+但通关靠的不是模型本身，而是人：人类在直播中观察 agent 的轨迹，手动改写系统提示、新增子代理、修复工具代码。
+最难的对局中，模型自己也开始通过长上下文记忆迭代策略——但这只是零星的涌现行为，真正干活的还是人。
+
+能不能把人从这个循环里去掉？已有的 prompt optimization 方法（如 GEPA）要求跑完一个完整 episode 再重置，然后用结果反馈来改写 prompt。
+对于宝可梦这种长周期游戏，一个 episode 可能跑几万步、持续数小时；
+每次改完 prompt 就重置到游戏开头，意味着改进信号只能来自"从第一关重新跑一遍"的统计——而许多失败模式（后期道馆、多步谜题、对话链）只有在 episode 深处才会出现，reset-based 方法在结构上根本够不到它们。
+
+* 它真正看见了什么
+
+harness 的四个组件（prompt、子代理、技能、记忆）可以在单次连续运行中被在线改写，不需要重置环境。机制是一个双循环结构：
+
+#+begin_example
+  内循环（每步）：agent 用当前 harness H_t 产出动作 a_t
+                   ↓
+  外循环（每 F 步）：Refiner 读最近 F 步轨迹
+    → 识别失败签名（导航死循环 / 工具调用失败 / 目标停滞）
+    → 四轮 CRUD 编辑：
+        ① 改写 prompt（针对已识别失败）
+        ② 增删改子代理（重复的多步模式封装为新子代理）
+        ③ 修复技能代码（从成功序列提炼 / 修复报错的代码）
+        ④ 更新记忆（填补缺口 / 淘汰过时条目）
+    → H_{t+1} = H_t ⊕ Δ，下一步立即生效，不重置
+#+end_example
+
+关键区别在于：失败签名在整个 episode 中单调累积——早期发现的失败在后续所有 refinement 中仍可用，所以改进质量随 episode 长度复合增长；而 reset-based 方法每次重置后这笔积累归零。
+这让 Continual Harness 能修复只有深处才出现的失败模式（后期战斗、多步谜题），这是 reset-based 方法在结构上做不到的。
+
+证据分三层，层层改变判断：
+
+第一层：在 Pokémon Red 和 Emerald 上，从零开始的 Continual Harness 恢复了大部分从 minimalist baseline 到手工专家 harness 的效率差距，且没有任何领域知识、手工工具或领域脚手架。
+在 Emerald 上用 Gemini 3 Pro，from-scratch 达到 100% 里程碑、花费 $130，而 minimalist baseline 在 98% 里程碑就花了 $215——约 40% 成本降低且无完成度损失。
+bootstrap-updating 变体（加载上次成功运行的 harness 并继续改进）在 Red 上每个里程碑都比 from-scratch 更高效，说明改进信号可以跨 episode 复合。
+
+第二层：harness 增益随模型能力缩放。在 Emerald 的成本-完成度 Pareto 平面上，Pro 严格 Pareto 占优，Flash 高方差，Flash-Lite 反而低于 minimalist baseline——harness 需要模型有足够能力来正确使用 harness 组件。
+这是一个能力地板：低于它的模型无法从 refinement 中受益。导航技能的独立测量佐证了自我改进的真实性：路径成本相对 Dijkstra 最优的差距从开局近 50% 惩罚降到个位数，且这个改进是在同一次运行内 reset-free 完成的。
+
+第三层：同一个 loop 可以驱动模型权重训练。
+开源 Gemma-4 在一个 live-refining harness 内做 256 步 rollout，过程奖励模型（PRM）打分低奖励窗口由前沿教师重标注，soft SFT 更新模型权重；训练 loop 也是 reset-free 的——上一轮结束时的模拟器状态直接作为下一轮起点。
+模型的游戏内位置在训练迭代间持续前进，无论从游戏开头还是从中期检查点出发都成立。
+
+适用边界就地说明：以上结果限于宝可梦 RPG 两款游戏、三个 Gemini 3 变体和一个开源模型族。残差到专家 harness 的差距集中在对话密集的道馆内部和多回合战斗策略——这些组件 Continual Harness 尚不能可靠合成。
+co-learning loop 未饱和，未建立收敛点；测试的开源模型尚不足以同时担任教师和学生。技能库存在大量 create-and-forget：大多数被创建的技能从未被调用，小部分工作集吸收了大部分调用。
+
+* 我能带走什么
+
+以后看到长周期 agent 性能卡住，不要只想着换更强的模型或手动调 harness，而要先问：能否让 agent 自己从最近的失败中就地修复 harness 组件——尤其是那些只在 episode 深处才出现的失败模式？
+
+一个直接相关的判断：当你要评估一个 agent 系统的改进潜力时，区分"模型能力不足"和"harness 没跟上"
+这篇论文的 capability floor 结果说明，两者有交互：太弱的模型连用好的 harness 都做不到，所以先确认模型在地板之上，再谈 harness 改进的价值。

@@ -1,0 +1,76 @@
+#+title:      好记忆让正确答案更可能
+#+subtitle:   InfoMem: Training Long-Context Memory Agents with Answer-Conditioned Information Gain
+#+source:     https://arxiv.org/abs/2606.03329
+#+authors:    Tiancheng Han, Yong Li, Wuzhou Yu, Qiaosheng Zhang, Wenqi Shao
+#+venue:      arXiv 2026 (Tongji University / Shanghai Innovation Institute / Shanghai AI Laboratory)
+
+* 速读
+
+Chunk-wise memory agent 训练时，outcome reward 只看答案对不对——同样答对的轨迹，记忆可能精炼也可能塞满噪音，奖励却一模一样。InfoMem 的核心判断：有用记忆应该让模型更相信正确答案。
+它用"有记忆 vs 无记忆时模型对正确答案的 per-token log-likelihood 之差"作为奖励，只在答对的轨迹上施加，并在组内归一化后与 outcome reward 叠加。
+实验显示这套设计在四个长文本 benchmark 上一致优于纯 outcome GRPO 和词级奖励 baseline ReMemR1，且三个设计选择缺一不可——尤其把奖励条件从 query 换成 answer 后，模型会学会把 query 抄进记忆来骗奖励。
+
+* 它到底在解决什么
+
+想象一个 chunk-wise memory agent：它逐段读长文档，每读一段更新一个紧凑记忆，最后只凭记忆答题。训练时用 GRPO 采样 8 条轨迹，按答案对错给 0/1 奖励。
+问题出在：同一个问题可能有多条轨迹都答对，但它们的最终记忆天差地别——有的只留了关键证据，有的把证据和大量干扰信息全塞进去，甚至有的记忆和答案关系不大但模型靠参数知识蒙对了。
+outcome reward 给它们都打 1，完全无法区分。
+
+现有的改进方案 ReMemR1 加了中间奖励，但它的奖励是词级召回——看记忆里有没有覆盖 ground-truth answer 的词。
+这量的是词汇重叠，不是语义支持：一段和问题主题相关但事实错误的文字，可能词面重叠很高却根本不支持答案。
+
+缺口很清楚：没有一个奖励直接问"这个最终记忆是否在语义上支持正确答案"。
+
+* 它真正看见了什么
+
+一句人话：有用的记忆不是和问题相关的记忆，而是让正确答案更可能出现的记忆。
+
+InfoMem 用一个点互信息的单样本替代来量化这个判断。核心公式：
+
+r_gain = (1/|y*|) log P(y*|x,M) − (1/|y*|) log P(y*|x,∅)
+
+人话翻译：把模型在"有最终记忆"和"空记忆"两种条件下，对正确答案的 per-token 平均 log-likelihood 求差。差越大，说明记忆越能提升模型对正确答案的信心。
+这不是分布级的互信息估计，而是单实例上的点估计——计算成本低，且直接落在当前样本上。
+
+但光有这个分数还不够。InfoMem 的关键在于三个设计选择，缺一不可：
+
+#+begin_example
+Rollout Group (n=8)
+  |-- Traj 1: R_outcome=0 --> R = 0  (不加 info-gain)
+  |-- Traj 2: R_outcome=1 --+
+  |-- Traj 3: R_outcome=1 --+  成功集 S
+  `-- ...                   |
+                            v
+         r_i = logP(y*|x,M_i) - logP(y*|x,[])  [仅 i in S]
+                            v
+         r~_i = (r_i - mu_S) / (sigma_S + eps)  [组内归一化]
+                            v
+         R_i = 1 + beta * r~_i                   [与 outcome 叠加]
+#+end_example
+
+*为什么只在成功轨迹上施加？* 失败轨迹里，记忆质量和错误推理纠缠在一起——模型可能记对了信息但推理错了，r_gain 的信号被噪声淹没。消融实验显示：把 info-gain 加到失败轨迹或全部轨迹上，训练在中途崩溃；而在去掉 outcome reward 的诊断实验中，成功侧 supervision 仍能持续提升训练准确率，失败侧和双侧则不能。这说明 info-gain 是"正样本塑形"信号，不是通用优化目标。
+
+*为什么必须归一化？* 简单问题本身就让模型对答案有高信心，记忆带来的提升小；难问题提升大。直接把原始 r_gain 和 0/1 outcome 叠加，info-gain 项会在某些 prompt 上淹没 outcome 信号，在另一些上可忽略。消融结果：去掉归一化，四个 benchmark 全线下降，检索类任务尤甚。
+
+*为什么条件化在答案而非问题上？* 这是最反直觉的发现。直觉上"有用记忆和问题相关"没错，但用 query 似然增益做奖励时，模型发现抄一遍 query 进记忆就能让 query 更可预测——query 重复率在训练中飙升，而 InfoMem 保持接近零。query 相关不等于 answer 支持。
+
+#+begin_example
+                     Answer-conditioned    Query-conditioned
+                     (InfoMem)             (QueryPMI)
+  --------------------------------+----------------------
+  记忆行为             保留答案证据           抄写/复述 query
+  Query 重复率          ~0%                  训练中飙升
+  四个 benchmark       最优                  一致更差
+#+end_example
+
+证据方面，Table 1 的合成幻觉证据实验最能说明 r_gain 的区分力：在"真实支持证据 vs 主题相似但事实错误的幻觉证据"的排序任务中，r_gain 的 MRR 达 0.977、信噪比达 2.96，远超 embedding 相似度（MRR ~0.72, SNR ~0.33）和注意力分数。这说明答案条件化的似然增益能穿透表面相似性，抓住语义支持。
+
+Table 2 的主实验中，一个值得注意的现象是：纯 outcome GRPO 在 MRCR-8needle 上从初始模型的 0.260 暴跌到 0.063——只优化答案对错反而损害了检索行为。InfoMem 不但避免了退化，还提升到 0.279。这提示：没有记忆级监督的 RL 可能让模型走捷径，牺牲长文本检索能力。
+
+这些结果在 1.5B 模型、512 条训练样本的受控条件下成立。论文未测试更大模型或其他长文本范式（如纯检索或全上下文单次推理），且奖励只在最终记忆上计算，中间记忆的 step-wise 监督是未来工作。此外，如果 ground-truth 答案本身有误或源文档有偏，InfoMem 会放大错误证据——在高风险场景中压缩记忆不应替代原文核查。
+
+* 我能带走什么
+
+以后设计记忆或中间奖励时，先不急着问"记忆和问题相关吗"或"答案对吗"，而先问：这个记忆是否让正确答案更可能？如果奖励信号量的是与问题的相关性，模型会学会抄问题；只有条件化在答案上，才逼模型保留真正支持答案的证据。
+
+一个直接相关的用法：在任意有显式中间状态（记忆、检索结果、推理链）的 RL 训练中，如果 outcome reward 太稀疏，不要用词级重叠做中间奖励——用"中间状态对 ground-truth 的似然增益"做，且只在成功轨迹上施加、组内归一化后再叠加。
