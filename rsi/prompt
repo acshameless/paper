@@ -1,0 +1,527 @@
+综述补充一篇
+
+https://arxiv.org/abs/2607.13104
+
+
+
+memoryflash
+
+https://arxiv.org/abs/2605.27276
+
+
+
+LLM in a Flash
+
+https://arxiv.org/abs/2312.11514
+
+
+
+
+
+Context Engineering
+
+https://arxiv.org/abs/2510.04618
+
+https://arxiv.org/abs/2601.21557
+
+
+
+Parameter
+
+https://arxiv.org/abs/2605.27276
+
+https://arxiv.org/abs/2604.19295
+
+https://arxiv.org/abs/2502.02069
+
+https://arxiv.org/abs/2607.14777
+
+https://arxiv.org/abs/2607.09415v1
+
+
+
+Memory
+
+https://arxiv.org/abs/2606.04536
+
+https://arxiv.org/abs/2605.13941
+
+https://arxiv.org/abs/2606.03329
+
+https://arxiv.org/pdf/2606.29961v1
+
+
+
+Signals/reward
+
+https://arxiv.org/abs/2601.09269
+
+https://arxiv.org/abs/2604.18131
+
+https://arxiv.org/abs/2603.19461
+
+https://arxiv.org/abs/2507.19457
+
+
+
+Skill
+
+https://arxiv.org/abs/2604.01687
+
+https://arxiv.org/abs/2605.09359
+
+https://arxiv.org/pdf/2605.05413
+
+
+
+
+
+self-refine
+
+https://arxiv.org/abs/2303.17651
+
+
+
+Meta-Harness
+
+https://arxiv.org/abs/2603.28052
+
+
+
+agent/workflow design
+
+https://arxiv.org/abs/2505.22954
+
+https://www.nature.com/articles/s41586-026-10265-5
+
+https://arxiv.org/abs/2605.26340
+
+https://arxiv.org/abs/2408.08435
+
+
+
+continue harness
+
+https://arxiv.org/abs/2605.09998
+
+https://arxiv.org/abs/2604.25850
+
+
+
+synthetic data
+
+https://arxiv.org/abs/2606.25996
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+--- page1
+
+Definition of Recursive Self-Improvement 
+
+
+
+What’s Recursive Self-Improvement? 
+
+实现视角：一个反馈闭环：AI 用当前智能去改进产生智能的"认知机器"本身 → 智能爆炸
+
+结果视角：RSI 打破了对指数级投资增长的依赖——改进效率不再随投入递减
+
+
+
+1. RSI 要对抗的敌人投资研发收益递减，累计研发投入越多，再投入一个单位带来的成效越小。 
+
+半导体实证：累计 R&D 每翻一番，研发效率约下降 1/3
+
+摩尔定律的真相：不是效率没降，而是投资呈指数增长补偿了下降
+
+RSI 的承诺：一个能逆推这条曲线的闭环——改进本身变得更高效
+
+
+
+
+
+2. 为什么以前没发生过？ 
+
+同样的循环（教育 → 方法 → 工具 → 反哺科学家）一直存在，但—— 
+
+
+
+约束  人类科学循环  RSI 赌注
+
+时间尺度  代际（数十年）   机器时间（小时/天） 
+
+基质  固定的生物大脑  可编辑的参数/代码
+
+传递  人与人之间有损传递  无损复制
+
+
+
+
+
+
+
+3. RSI 的四个等级
+
+Level 0 — 委托（Delegation） 
+
+系统端到端自主完成研究闭环：提出假设 → 跑实验 → 部署改进。 但改进速度慢于人类 R&D。Level 1 — 净正向（Net Positive） 
+
+系统自我改进的效率超过人类用 Level 0 工具手动改进同一系统。 
+
+测量协议： 
+
+公平基线：人类可用任何工具/文献/AI 助手，但每个改进闭环由人关闭
+
+持续：多步趋势，非一次性跳变
+
+泛化：在 X 上改进必须迁移到真实效用或基准族 Y
+
+固定预算：性能在固定物理预算下测量——增益来自更好的算法，而非更多算力
+
+Level 2 — 点火（Ignition） 
+
+系统不仅改进自己，还改进自己改进自己的能力。 
+
+Level 1：在 X 上优化 → 迁移到 Y ✓
+
+Level 2：在 X 上的增益泛化到自我改进能力本身 → 闭环开始复合 ✓
+
+Level 3 — 拐点（Inflection） 
+
+正反馈闭环跑赢收益递减。 
+
+点火说：闭环可以复合
+
+拐点说：复合跑赢难度增长
+
+实测标准：固定预算下，每一代买到的增益在增长，而非缩小
+
+
+
+
+
+https://www.weco.ai/blog/4-levels-of-recursive-self-improvement
+
+https://lilianweng.github.io/posts/2026-07-04-harness/ 
+
+
+
+page1 素材： 
+
+
+
+The promise of RSI is a loop that pushes against this. RSI 的优势在于它形成了一个良性循环，可以抵消这种影响。Why has this never happened before? Not because the scientist never improved. Education, method and tools have always fed back into the scientist. But that loop runs on generational timescales, through a fixed biological substrate, and its gains transfer lossily from one mind to the next. Its rate never came close to the pace at which problems get harder. The RSI bet is the same loop closed in machine time, on an editable substrate, with lossless copies.为什么以前从未发生过这种情况？并非因为科学家从未进步。教育、方法和工具一直都在反过来促进科学家的发展。但这种循环需要几代人的时间才能完成，而且是在固定的生物基质上进行的，其成果在人与人之间传递时是有损的。它的速度从未接近问题难度增加的速度。RSI 的赌注是同样的循环，只不过是在机器时间尺度上完成的，而且是在可编辑的基质上进行的，并能实现无损复制。 
+
+
+
+One number to carry: in semiconductors, each doubling of cumulative R&D has bought roughly a third less research productivity. Moore's law held its pace because the investment underneath it grew exponentially to compensate.一个值得关注的数字是：在半导体领域，累计研发投入每翻一番，研发效率大约就会下降三分之一。摩尔定律之所以能够维持下去，是因为与之配套的投资呈指数级增长以弥补投入的不足
+
+
+
+Level 0: delegation
+
+You hand the research loop to an autonomous system end to end: it forms the hypotheses, runs the experiments and ships the improvements on its own. What keeps it at Level 0 is efficiency: the loop runs, but it improves the system more slowly than human R&D. 
+
+ 
+
+Level 1: net positive
+
+An autonomous system improves itself, and does so more efficiently than humans improving the same system by hand with Level 0 tools. 
+
+ 
+
+To measure Level 1, we would internally use the following protocol: 
+
+A fair human baseline. The humans may use any reasonable tool or resource except the system improving itself: any accessible literature, any code, general AI assistance. What marks the baseline is that a human closes each improvement loop. 
+
+Sustained. The self-improvement is a consistent, multi-step trend, not a one-time jump. 
+
+General. The system improves itself against some measurement X. The gains must transfer to real world utility, or a family of benchmarks Y, showing it discovered generally useful self-improvements rather than artifacts of X. 
+
+Fixed budget. Performance on X is measured under a fixed physical budget. The gains must come from genuinely better algorithms, not from spending more. 
+
+  
+
+Level 2: ignition
+
+On top of Level 1, the system does not just improve itself; it improves its own ability to improve itself. The distinction is easy to miss. A Level 1 system optimizes itself against X, and its gains transfer to Y. But better on Y does not guarantee the loop compounds: for that, the gains on X must generalize to the system's own self-improvement ability. 
+
+ 
+
+Level 3: inflection
+
+The positive feedback loop overcomes diminishing returns. Progress accelerates even with a fixed amount of effort, for example as measured by R&D investment. Ignition says the loop can compound. Inflection says the compounding outruns the rising difficulty. The practical test: the gain each generation buys, at a fixed budget, grows instead of shrinking. 
+
+ 
+
+
+
+---page 2
+
+State of Recursive Self-Improvement 
+
+
+
+Type of Recursive Self-Improvement
+
+This feedback loop in modern AI may indicate the model rewriting its own weights directly, or more broadly the model improves the training pipeline and the deployment system, which in turn enables a better successor model with improved performance across economically valuable tasks. 
+
+模型通过 feedback loop 改进自身，改进可以落在两个位置——直接落进权重（狭义），或落进训练管线和部署 runtime 再间接产出更好的后继模型（广义）。__ 两者的关联在于：权重是模型的"内部"，runtime 是模型的"外部"，但改进在两者中都是持久的、可积累的，因此都能形成递归闭环。广义路径是窄义路径的"more broadly"版本——不直接改自己，而是改产出自己的那套系统。 
+
+
+
+探索的方向
+
+自演进内核技术的四种载体
+
+
+
+context，轻量但易遗忘
+
+
+
+memory laye
+
+技能库 / 经验池，可热插拔、可回滚
+
+
+
+Lora
+
+能力烧进权重，须云端训练
+
+
+
+状态 / 架构级
+
+agentic workflow design
+
+
+
+
+
+改进什么 × 闭环程度
+
+
+
+
+
+
+
+Axis 1: what changes? 
+
+The system may improve deployment behavior, policy/weights, evaluation machinery, or research itself
+
+
+
+Deployment-time
+
+AI-assisted coding manual prompts hand-designed agents
+
+Self-Refine, Execution repair, Test-time computing/training
+
+Darwin Godel Machine sandboxed self-modification
+
+
+
+
+
+Training-time
+
+Human-curated RLHF baseline
+
+STaR, self-rewarding LMs, on-policy self-distrilllation
+
+Zero-data self-play Absolute Zero R-Zero, Agent0
+
+
+
+Self-evaluation
+
+Expert rubrics Human benchmark design
+
+Process rewards LLM-as-Judge Audited taxonomies
+
+Self-rewarding judges Meta-evaluation evaluator, co-evolution
+
+
+
+Auto Research
+
+Human-directed research with AI assistants
+
+FunSearch AlphaEvolve AI Scientist agents
+
+AI-Evolve-Training Autonomous Post-training loop
+
+
+
+
+
+Axis 2: 
+
+who validates improvement? 
+
+
+
+Human-in-the-loop  Person reviews each change
+
+
+
+Human-on-the-loop  Automatic signal; Human audits outcomes
+
+
+
+Closed-loop  System generates, validates, and applies changes
+
+
+
+
+
+bounded Self-refinement
+
+
+
+open-ended RSI rare; Frontier Exploration Phase
+
+
+
+
+
+
+
+page2 素材： 
+
+最新进展 (2026 年 7 月)：发布了重磅成果 AIDE²，声称获得了“RSI 的首个实验证据”（达到了他们定义的 Level 1 RSI）。系统在无人干预的情况下运行了 8 天，经历了 100 次外部循环迭代，自主重写了内部研究 Agent 的代码 7 次。最终生成的版本在性能上击败了人类工程师手动调优 2 年的基准。同时，他们的另一个 Agent “Aiden” 在 OpenAI 的“Parameter Golf”挑战赛中大幅超越了人类顶尖选手的成绩。https://www.weco.ai/blog/first-evidence-of-recursive-self-improvement
+
+Claude code可以由Claude code自身不断改进，未来版本可能足够强大，能够自行构建和训练模型。 
+
+GPT-5.6 Sol autonomously post-trained the smaller Luna model. Sol find the right training configs, pick suitable GPUs, launch the training script, and verify everything ran correctly. Sol did all of ithttps://youtu.be/Wq45rvPGNHs?t=1245
+
+AlphaEvolve 是其在探索算法层面的最新突破，它在无需人类先验知识介入的情况下，自主找到了一种仅用 48 次标量乘法就能完成 4×4 复数矩阵乘法的新方法。这是 AI 自主改进基础数学和计算机科学底层组件的经典案例。 
+
+其自动化 AI 研究系统在极限算力测试（如 NanoGPT Speedrun）中，从相同的初始代码出发，自主发现了包括内存传输策略、分块方法等底层优化模式，将训练时间进一步压缩至 77.5 秒，超越了社区最佳人类贡献者的方案。https://www.recursive.com/articles/first-steps-toward-automated-ai-research
+
+案例一：NanoChat Autoresearch
+
+在固定5分钟单GPU预算下训练小语言模型，目标是最低验证BPB。 
+
+系统从与社区相同的初始解出发，超越了autoresearch@home社区（数十人+数百智能体协作）的最佳方案。 
+
+从更弱的起点（朴素Transformer+AdamW）也能从1.059 BPB改进到0.9344 BPB，同样超越社区最佳。 
+
+最佳方案非单一技巧，而是架构、短上下文记忆、辅助损失、注意力、优化器、权重衰减调度、编译器设置等多方面改进的组合。最大增益来自更丰富的短上下文记忆机制——哈希bigram/trigram嵌入表通过学习门控混入注意力值路径。 
+
+案例二：NanoGPT Speedrun
+
+目标是尽快在FineWeb数据集上训练到3.28验证损失（单HGX H100 8-GPU节点）。 
+
+该社区已优化两年，83次人类破纪录贡献，训练时间从约45分钟压缩到79.7秒。 
+
+系统从当前领先解出发，进一步降至77.5秒，改进幅度与近期人类贡献相当或更大。 
+
+从约15分钟的早期解出发，系统数天内达到约185秒，接近2025年5月人类水平。 
+
+77.5秒方案结合了FP8注意力、探索噪声、谨慎嵌入更新、融合GPU内核等多种优化。 
+
+案例三：SOL-ExecBench
+
+聚焦编写快速、正确的GPU内核（矩阵乘、归约、归一化、注意力、量化、融合块等），共235个任务，在NVIDIA B200上运行。 
+
+系统跨所有内核联合运行，复用跨相关任务的发现（内存搬运、分块、归约、向量化、融合等模式）。 
+
+平均SOL得分0.754，较之前最佳0.699将硬件极限差距缩小18%。 
+
+奖励作弊是该基准的突出挑战（缓存输出、依赖持久状态、利用计时漏洞等），系统通过递进严格的自动正确性审计来区分真实改进与作弊。 
+
+ 
+
+这些成果主要提升效率，表明AI进步不仅来自更大模型和更多算力，也来自让现有系统训练更快、运行更便宜、硬件利用更高效。 
+
+
+
+发布 “The AI Scientist”，一个能够自主生成研究思路、编写代码、运行实验、甚至最终撰写并评审科学论文的闭环系统。https://sakana.ai/ai-scientist-nature/ 
+
+
+
+
+
+
+
+---page 3
+
+RSI Five Layer Architecture 
+
+The Five-Layer Definitions
+
+
+
+Evolution carriers run from the outside in – lighter at the top, heavier at the bottom
+
+Generality and on-device point to the same answer – move up the latter (the main battleground of self-evolution lies in L1-L3) 
+
+        - The generality requires evolution artifacts to be transferable(textualized context policies, memories and skills can be carried across models & devices) 
+
+        - The on-device requires zero or low parameter changes, artifacts stored as text, and private data staying inside the device. 
+
+
+
+
+
+
+
+Layer | Managers (Lifespan) | What Evolves | On-Device | Generality
+
+① L1 Context | Current Context (1 Episode)|The model actively manages its context (write/delete/compress),zero parameters changes | ★★★★★ |High: fully decoupled from the model
+
+② L2 Memory / Knowledge | Knowledge & experience(Cross-task) |Experience externalized as portable knowledge (Markdown/vectors/KG) | ★★★★★ |High: artifacts transferable across models
+
+③ L3 Skills | Ways of doing things (Cross-task/model) | Knowledge consolidated into executable skills and tools, reusable across tasks | ★★★ |Medium-high: skill libraries are portable
+
+④ L4 Signals | Standards of “good”(/)| Source of the learning signal:Human reward  -> self-reward -> reward-free | ★★|Critical: reward-free is the key to generality
+
+⑤ L5 Parameters | Model itself (As long as Model lives)| Weight-level updates | ★|Low: bound to a single model, with catastrophic forgetting
+
+
+
+---page4 paper1/2 详解，从上述arxiv 链接挑选1~2篇论文，context 相关
+
+
+
+---page5 paper1/2 详解，从上述arxiv 链接挑选1~2篇论文，memory 相关
+
+
+
+---page6 paper1/2 详解，从上述arxiv 链接挑选1~2篇论文，memory 相关
+
+
+
+---page7 paper1/2 详解，从上述arxiv 链接挑选1~2篇论文，Signals/reward 相关
+
+
+
+---page8 paper1/2 详解，从上述arxiv 链接挑选1~2篇论文，Lora/model parameter相关
+
+
+
+进化载体由外而内，越靠上越轻、越外化；越靠上越重、越接近模型本体
+
+
+
+上述是为准备 RSI Sensing Report 准备的素材和大纲，请你深入理解核实，为我逐页写出slide
